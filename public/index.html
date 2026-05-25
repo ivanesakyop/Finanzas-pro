@@ -77,6 +77,7 @@ const PAGES = [
   { key:'gastos',      label:'Gastos',        sub:'Nómina y gastos operativos' },
   { key:'categorias',  label:'Por categoría', sub:'Dónde se concentra el gasto' },
   { key:'clientes',    label:'Por cliente',   sub:'Quién aporta más al ingreso' },
+  { key:'operaciones', label:'Operaciones',   sub:'Empresas, guardias y rentabilidad mensual' },
 ];
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
@@ -139,6 +140,8 @@ const IcoTrash = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stro
 const IcoSearch = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L13.5 13.5" strokeLinecap="round"/></svg>;
 const IcoX = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 3l10 10M13 3L3 13" strokeLinecap="round"/></svg>;
 const IcoKey = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="6" cy="8" r="3.5"/><path d="M9 8h5M12 6v4" strokeLinecap="round"/></svg>;
+const IcoBriefcase = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="2" y="6" width="12" height="8" rx="1.5"/><path d="M5 6V5a2 2 0 014 0v1" strokeLinecap="round"/><line x1="2" y1="10" x2="14" y2="10"/></svg>;
+const IcoChevron = (open) => <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ transform: open?'rotate(180deg)':'none', transition:'transform .2s' }}><path d="M4 6l4 4 4-4" strokeLinecap="round"/></svg>;
 
 // ════════════════════════════════════════════════════════════
 // APP
@@ -146,8 +149,10 @@ const IcoKey = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke
 function App() {
   const [mode, setMode] = useState('light');
   const [page, setPage] = useState('dashboard');
-  const [ingresos, setIngresos] = useState(() => DB.get('fp_ingresos', []));
-  const [gastos, setGastos]     = useState(() => DB.get('fp_gastos', []));
+  const [ingresos, setIngresos]   = useState(() => DB.get('fp_ingresos', []));
+  const [gastos, setGastos]       = useState(() => DB.get('fp_gastos', []));
+  const [empresas, setEmpresas]   = useState(() => DB.get('fp_empresas', []));
+  const [guardias, setGuardias]   = useState(() => DB.get('fp_guardias', []));
   const [supaClient, setSupaClient] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [syncStatus, setSyncStatus] = useState('idle');
@@ -184,6 +189,19 @@ function App() {
     DB.set('fp_gastos', gast);
   };
 
+  const saveCloudOps = async (client, user, emps, guards) => {
+    await client.from('guardias').delete().eq('user_id', user.id);
+    await client.from('empresas').delete().eq('user_id', user.id);
+    if (emps.length) {
+      const { error } = await client.from('empresas').insert(emps.map(e => ({ id:e.id, user_id:user.id, nombre:e.nombre, pago_mensual:e.pago_mensual })));
+      if (error) throw error;
+    }
+    if (guards.length) {
+      const { error } = await client.from('guardias').insert(guards.map(g => ({ id:g.id, user_id:user.id, empresa_id:g.empresa_id, nombre:g.nombre, pago_mensual:g.pago_mensual })));
+      if (error) throw error;
+    }
+  };
+
   const saveCloud = async (client, user, ing, gast) => {
     setSyncStatus('syncing');
     const ingRows = ing.map(x => ({
@@ -207,15 +225,20 @@ function App() {
 
   const loadCloud = async (client, user) => {
     setSyncStatus('syncing');
-    const [{ data:ingData, error:e1 }, { data:gastData, error:e2 }] = await Promise.all([
+    const [{ data:ingData, error:e1 }, { data:gastData, error:e2 }, { data:empData, error:e3 }, { data:guardData, error:e4 }] = await Promise.all([
       client.from('ingresos').select('*').eq('user_id', user.id).order('fecha', { ascending:false }),
       client.from('gastos').select('*').eq('user_id', user.id).order('fecha', { ascending:false }),
+      client.from('empresas').select('*').eq('user_id', user.id).order('created_at', { ascending:true }),
+      client.from('guardias').select('*').eq('user_id', user.id).order('created_at', { ascending:true }),
     ]);
-    if (e1 || e2) { setSyncStatus('error'); return; }
-    const ing = (ingData||[]).map(r => ({ id:r.id, cliente:r.cliente, monto:Number(r.monto), fecha:r.fecha, periodo:r.periodo, concepto:r.concepto||'', notas:r.notas||'' }));
-    const gast = (gastData||[]).map(r => ({ id:r.id, categoria:r.categoria, monto:Number(r.monto), fecha:r.fecha, periodo:r.periodo, descripcion:r.descripcion, otrosDetalle:r.otros_detalle||'', notas:r.notas||'' }));
-    setIngresos(ing); setGastos(gast);
+    if (e1 || e2 || e3 || e4) { setSyncStatus('error'); return; }
+    const ing   = (ingData||[]).map(r => ({ id:r.id, cliente:r.cliente, monto:Number(r.monto), fecha:r.fecha, periodo:r.periodo, concepto:r.concepto||'', notas:r.notas||'' }));
+    const gast  = (gastData||[]).map(r => ({ id:r.id, categoria:r.categoria, monto:Number(r.monto), fecha:r.fecha, periodo:r.periodo, descripcion:r.descripcion, otrosDetalle:r.otros_detalle||'', notas:r.notas||'' }));
+    const emps  = (empData||[]).map(r => ({ id:r.id, nombre:r.nombre, pago_mensual:Number(r.pago_mensual) }));
+    const guards= (guardData||[]).map(r => ({ id:r.id, empresa_id:r.empresa_id, nombre:r.nombre, pago_mensual:Number(r.pago_mensual) }));
+    setIngresos(ing); setGastos(gast); setEmpresas(emps); setGuardias(guards);
     persistLocal(ing, gast);
+    DB.set('fp_empresas', emps); DB.set('fp_guardias', guards);
     setSyncStatus('synced'); setLastSync(new Date());
   };
 
@@ -251,6 +274,42 @@ function App() {
     const next = gastos.filter(x => x.id !== id);
     setGastos(next); persistLocal(ingresos, next);
     if (supaClient && currentUser) try { await saveCloud(supaClient, currentUser, ingresos, next); } catch {}
+  };
+
+  const addEmpresa = async data => {
+    const emp = { id: crypto.randomUUID(), ...data };
+    const next = [...empresas, emp];
+    setEmpresas(next); DB.set('fp_empresas', next);
+    if (supaClient && currentUser) {
+      try { await saveCloudOps(supaClient, currentUser, next, guardias); }
+      catch { showToast('Guardado local. Sin conexión a la nube.', 'warn'); }
+    }
+    setModal(null); showToast('Empresa registrada', 'ok');
+  };
+
+  const addGuardia = async data => {
+    const guard = { id: crypto.randomUUID(), ...data };
+    const next = [...guardias, guard];
+    setGuardias(next); DB.set('fp_guardias', next);
+    if (supaClient && currentUser) {
+      try { await saveCloudOps(supaClient, currentUser, empresas, next); }
+      catch { showToast('Guardado local. Sin conexión a la nube.', 'warn'); }
+    }
+    setModal(null); showToast('Guardia registrado', 'ok');
+  };
+
+  const deleteEmpresa = async id => {
+    const nextEmp = empresas.filter(e => e.id !== id);
+    const nextGuard = guardias.filter(g => g.empresa_id !== id);
+    setEmpresas(nextEmp); setGuardias(nextGuard);
+    DB.set('fp_empresas', nextEmp); DB.set('fp_guardias', nextGuard);
+    if (supaClient && currentUser) try { await saveCloudOps(supaClient, currentUser, nextEmp, nextGuard); } catch {}
+  };
+
+  const deleteGuardia = async id => {
+    const next = guardias.filter(g => g.id !== id);
+    setGuardias(next); DB.set('fp_guardias', next);
+    if (supaClient && currentUser) try { await saveCloudOps(supaClient, currentUser, empresas, next); } catch {}
   };
 
   const logout = async () => { if (supaClient) await supaClient.auth.signOut(); };
@@ -348,11 +407,14 @@ function App() {
           {page === 'gastos'      && <GastPage t={t} gastos={gastos} mes={mes} ano={ano} onAdd={() => setModal('gasto')} onDelete={deleteGasto} />}
           {page === 'categorias'  && <CatPage t={t} categorias={categorias} gastos={gastos} />}
           {page === 'clientes'    && <CliPage t={t} clientes={clientes} totals={totals} />}
+          {page === 'operaciones' && <OpsPage t={t} empresas={empresas} guardias={guardias} onAddEmpresa={() => setModal('empresa')} onAddGuardia={() => setModal('guardia')} onDeleteEmpresa={deleteEmpresa} onDeleteGuardia={deleteGuardia} />}
         </div>
       </div>
-      {modal === 'ingreso' && <IngresoModal t={t} onClose={() => setModal(null)} onSave={addIngreso} />}
-      {modal === 'gasto'   && <GastoModal   t={t} onClose={() => setModal(null)} onSave={addGasto} />}
-      {modal === 'auth'    && <AuthModal     t={t} onClose={() => setModal(null)} supaClient={supaClient} />}
+      {modal === 'ingreso'  && <IngresoModal  t={t} onClose={() => setModal(null)} onSave={addIngreso} />}
+      {modal === 'gasto'    && <GastoModal    t={t} onClose={() => setModal(null)} onSave={addGasto} />}
+      {modal === 'auth'     && <AuthModal     t={t} onClose={() => setModal(null)} supaClient={supaClient} />}
+      {modal === 'empresa'  && <EmpresaModal  t={t} onClose={() => setModal(null)} onSave={addEmpresa} />}
+      {modal === 'guardia'  && <GuardiaModal  t={t} onClose={() => setModal(null)} onSave={addGuardia} empresas={empresas} />}
       {toast && <Toast t={t} msg={toast.msg} type={toast.type} />}
     </div>
   );
@@ -370,8 +432,10 @@ function Sidebar({ t, page, setPage, currentUser, onLogin, onLogout }) {
     { ico:IcoUp,    label:'Ingresos',     key:'ingresos' },
     { ico:IcoDown,  label:'Gastos',       key:'gastos' },
     { sec:'Análisis' },
-    { ico:IcoTag,   label:'Por categoría',key:'categorias' },
-    { ico:IcoUser,  label:'Por cliente',  key:'clientes' },
+    { ico:IcoTag,       label:'Por categoría', key:'categorias' },
+    { ico:IcoUser,      label:'Por cliente',   key:'clientes' },
+    { sec:'Operaciones' },
+    { ico:IcoBriefcase, label:'Empresas',      key:'operaciones' },
   ];
   const initial = currentUser?.email?.[0]?.toUpperCase() || '?';
   const emailShort = currentUser?.email?.split('@')[0] || '';
@@ -1324,6 +1388,227 @@ function AuthModal({ t, onClose, supaClient }) {
           <button onClick={onClose} style={{ ...primaryBtn(t),marginTop:20 }}>Cerrar</button>
         </div>
       )}
+    </ModalOverlay>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// OPERACIONES PAGE
+// ════════════════════════════════════════════════════════════
+function OpsPage({ t, empresas, guardias, onAddEmpresa, onAddGuardia, onDeleteEmpresa, onDeleteGuardia }) {
+  const [expandida, setExpandida] = React.useState(null);
+
+  const datos = empresas.map(e => {
+    const guards = guardias.filter(g => g.empresa_id === e.id);
+    const costoGuardias = guards.reduce((s, g) => s + g.pago_mensual, 0);
+    return { ...e, guards, costoGuardias, ganancia: e.pago_mensual - costoGuardias };
+  });
+
+  const totalPago     = datos.reduce((s, e) => s + e.pago_mensual, 0);
+  const totalCosto    = datos.reduce((s, e) => s + e.costoGuardias, 0);
+  const totalGanancia = totalPago - totalCosto;
+  const margen        = totalPago ? (totalGanancia / totalPago * 100) : 0;
+
+  return (
+    <>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:16, marginBottom:18 }}>
+        {[
+          { l:'Empresas',           v: String(empresas.length),  color: t.accent },
+          { l:'Guardias totales',   v: String(guardias.length),  color: t.text },
+          { l:'Facturación mensual',v: fmt(totalPago),           color: t.pos },
+          { l:'Ganancia mensual',   v: fmt(totalGanancia),       sub: `Margen ${margen.toFixed(1)}%`, color: totalGanancia >= 0 ? t.pos : t.neg },
+        ].map((s, i) => (
+          <div key={i} style={cardS(t)}>
+            <div style={kpiLabel(t)}>{s.l}</div>
+            <div style={{ ...kpiVal(t), color: s.color }}>{s.v}</div>
+            {s.sub && <div style={{ fontSize:12, color:t.muted, marginTop:8 }}>{s.sub}</div>}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display:'flex', gap:10, marginBottom:18 }}>
+        <button onClick={onAddEmpresa} style={primaryBtn(t)}>+ Agregar empresa</button>
+        {empresas.length > 0 && (
+          <button onClick={onAddGuardia} style={{ all:'unset', cursor:'pointer', padding:'9px 16px', borderRadius:12,
+            background:t.accentBg, color:t.accent, fontSize:13, fontWeight:600, border:`1px solid ${t.accent}33` }}>
+            + Agregar guardia
+          </button>
+        )}
+      </div>
+
+      {datos.length === 0 && (
+        <div style={{ ...cardS(t, { padding:48, textAlign:'center' }) }}>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:26, fontWeight:500, color:t.text, marginBottom:12 }}>Sin empresas registradas</div>
+          <p style={{ color:t.text2, fontSize:14, marginBottom:24 }}>Agrega tu primera empresa cliente para calcular tu rentabilidad.</p>
+          <button onClick={onAddEmpresa} style={primaryBtn(t)}>+ Agregar empresa</button>
+        </div>
+      )}
+
+      <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+        {datos.map(e => (
+          <div key={e.id} style={cardS(t, { padding:0, overflow:'hidden' })}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr repeat(3,130px) 36px 28px', gap:12,
+              alignItems:'center', padding:'16px 22px', cursor:'pointer' }}
+              onClick={() => setExpandida(expandida === e.id ? null : e.id)}>
+              <div>
+                <div style={{ fontWeight:600, fontSize:15, color:t.text }}>{e.nombre}</div>
+                <div style={{ fontSize:12, color:t.muted, marginTop:2 }}>{e.guards.length} guardia(s)</div>
+              </div>
+              <div style={{ textAlign:'right' }}>
+                <div style={{ fontSize:10, color:t.muted, textTransform:'uppercase', letterSpacing:'0.8px', marginBottom:3 }}>Pago empresa</div>
+                <div style={{ fontFamily:"'JetBrains Mono'", fontWeight:600, color:t.pos, fontSize:15 }}>{fmt(e.pago_mensual)}</div>
+              </div>
+              <div style={{ textAlign:'right' }}>
+                <div style={{ fontSize:10, color:t.muted, textTransform:'uppercase', letterSpacing:'0.8px', marginBottom:3 }}>Costo guardias</div>
+                <div style={{ fontFamily:"'JetBrains Mono'", fontWeight:600, color:t.neg, fontSize:15 }}>−{fmt(e.costoGuardias)}</div>
+              </div>
+              <div style={{ textAlign:'right' }}>
+                <div style={{ fontSize:10, color:t.muted, textTransform:'uppercase', letterSpacing:'0.8px', marginBottom:3 }}>Ganancia</div>
+                <div style={{ fontFamily:"'JetBrains Mono'", fontWeight:700, fontSize:16, color: e.ganancia >= 0 ? t.pos : t.neg }}>{fmt(e.ganancia)}</div>
+              </div>
+              <button onClick={ev => { ev.stopPropagation(); if(confirm(`¿Eliminar ${e.nombre} y todos sus guardias?`)) onDeleteEmpresa(e.id); }}
+                style={iconBtn(t)} title="Eliminar empresa">{IcoTrash}</button>
+              <span style={{ color:t.muted, display:'flex', justifyContent:'center' }}>{IcoChevron(expandida === e.id)}</span>
+            </div>
+
+            {expandida === e.id && (
+              <div style={{ borderTop:`1px solid ${t.border}`, background:t.surfaceAlt }}>
+                {e.guards.length === 0 ? (
+                  <div style={{ padding:'18px 22px', color:t.muted, fontSize:14 }}>Sin guardias asignados. Usa "+ Agregar guardia" para agregar uno.</div>
+                ) : (
+                  <table style={tableS}>
+                    <thead><tr>
+                      {['Guardia','Pago mensual',''].map((h, i) => (
+                        <th key={i} style={{ padding:'10px 22px', fontSize:10.5, fontWeight:600, letterSpacing:'0.8px',
+                          textTransform:'uppercase', color:t.muted, textAlign: i === 1 ? 'right' : 'left',
+                          borderBottom:`1px solid ${t.border}` }}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {e.guards.map(g => (
+                        <tr key={g.id} style={{ borderTop:`1px solid ${t.border}` }}>
+                          <td style={{ padding:'12px 22px', fontSize:13.5, fontWeight:500, color:t.text }}>{g.nombre}</td>
+                          <td style={{ padding:'12px 22px', textAlign:'right', fontFamily:"'JetBrains Mono'", fontWeight:600, color:t.neg }}>−{fmt(g.pago_mensual)}</td>
+                          <td style={{ padding:'12px 22px', textAlign:'right' }}>
+                            <button onClick={() => { if(confirm(`¿Eliminar a ${g.nombre}?`)) onDeleteGuardia(g.id); }}
+                              style={iconBtn(t)} title="Eliminar guardia">{IcoTrash}</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {datos.length > 1 && (
+        <div style={cardS(t, { padding:24, marginTop:18 })}>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:22, fontWeight:500, color:t.text, marginBottom:4 }}>Rentabilidad por empresa</div>
+          <div style={{ fontSize:12.5, color:t.muted, marginBottom:18 }}>Comparativa mensual</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+            {datos.sort((a,b) => b.ganancia - a.ganancia).map((e, i) => {
+              const maxGan = Math.max(...datos.map(d => d.pago_mensual));
+              return (
+                <div key={e.id}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:6, fontSize:13 }}>
+                    <span style={{ fontWeight:600, color:t.text }}>{e.nombre}</span>
+                    <span style={{ display:'flex', gap:16, fontFamily:"'JetBrains Mono'", fontSize:12.5 }}>
+                      <span style={{ color:t.pos }}>{fmt(e.pago_mensual)}</span>
+                      <span style={{ color:t.neg }}>−{fmt(e.costoGuardias)}</span>
+                      <span style={{ color: e.ganancia >= 0 ? t.pos : t.neg, fontWeight:700 }}>{fmt(e.ganancia)}</span>
+                    </span>
+                  </div>
+                  <div style={{ height:10, borderRadius:99, background:t.chip, overflow:'hidden', position:'relative' }}>
+                    <div style={{ position:'absolute', left:0, top:0, height:'100%', borderRadius:99,
+                      width:`${e.pago_mensual/maxGan*100}%`, background:t.posSoft }}/>
+                    <div style={{ position:'absolute', left:0, top:0, height:'100%', borderRadius:99,
+                      width:`${e.costoGuardias/maxGan*100}%`, background:t.negSoft }}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function EmpresaModal({ t, onClose, onSave }) {
+  const [form, setForm] = useState({ nombre:'', pago_mensual:'' });
+  const [err, setErr] = useState('');
+  const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
+  const save = () => {
+    if (!form.nombre.trim() || !form.pago_mensual) { setErr('Completa todos los campos.'); return; }
+    const pago = parseFloat(form.pago_mensual);
+    if (isNaN(pago) || pago <= 0) { setErr('Monto inválido.'); return; }
+    onSave({ nombre: form.nombre.trim(), pago_mensual: pago });
+  };
+  return (
+    <ModalOverlay t={t} onClose={onClose}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+        <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:26, color:t.text }}>Registrar Empresa</h3>
+        <button onClick={onClose} style={iconBtn(t)}>{IcoX}</button>
+      </div>
+      {err && <div style={{ padding:'10px 14px', borderRadius:9, background:t.negSoft, color:t.neg, fontSize:13, marginBottom:14 }}>{err}</div>}
+      <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+        <div>
+          <label style={{ fontSize:13, color:t.text2, fontWeight:500, display:'block', marginBottom:6 }}>Nombre de la empresa *</label>
+          <input value={form.nombre} onChange={set('nombre')} placeholder="Ej. Empresa ABC" style={inputS(t)}/>
+        </div>
+        <div>
+          <label style={{ fontSize:13, color:t.text2, fontWeight:500, display:'block', marginBottom:6 }}>Pago mensual ($) *</label>
+          <input value={form.pago_mensual} onChange={set('pago_mensual')} type="number" placeholder="0.00" min="0" step="0.01" style={inputS(t)}/>
+        </div>
+      </div>
+      <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:24, paddingTop:20, borderTop:`1px solid ${t.border}` }}>
+        <button onClick={onClose} style={{ all:'unset', cursor:'pointer', padding:'9px 18px', borderRadius:12, border:`1px solid ${t.border}`, color:t.text2, fontSize:14, fontWeight:600 }}>Cancelar</button>
+        <button onClick={save} style={primaryBtn(t)}>Guardar empresa</button>
+      </div>
+    </ModalOverlay>
+  );
+}
+
+function GuardiaModal({ t, onClose, onSave, empresas }) {
+  const [form, setForm] = useState({ empresa_id: empresas[0]?.id || '', nombre:'', pago_mensual:'' });
+  const [err, setErr] = useState('');
+  const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
+  const save = () => {
+    if (!form.empresa_id || !form.nombre.trim() || !form.pago_mensual) { setErr('Completa todos los campos.'); return; }
+    const pago = parseFloat(form.pago_mensual);
+    if (isNaN(pago) || pago <= 0) { setErr('Monto inválido.'); return; }
+    onSave({ empresa_id: form.empresa_id, nombre: form.nombre.trim(), pago_mensual: pago });
+  };
+  return (
+    <ModalOverlay t={t} onClose={onClose}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+        <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:26, color:t.text }}>Registrar Guardia</h3>
+        <button onClick={onClose} style={iconBtn(t)}>{IcoX}</button>
+      </div>
+      {err && <div style={{ padding:'10px 14px', borderRadius:9, background:t.negSoft, color:t.neg, fontSize:13, marginBottom:14 }}>{err}</div>}
+      <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+        <div>
+          <label style={{ fontSize:13, color:t.text2, fontWeight:500, display:'block', marginBottom:6 }}>Empresa *</label>
+          <select value={form.empresa_id} onChange={set('empresa_id')} style={selectS(t)}>
+            {empresas.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize:13, color:t.text2, fontWeight:500, display:'block', marginBottom:6 }}>Nombre del guardia *</label>
+          <input value={form.nombre} onChange={set('nombre')} placeholder="Nombre completo" style={inputS(t)}/>
+        </div>
+        <div>
+          <label style={{ fontSize:13, color:t.text2, fontWeight:500, display:'block', marginBottom:6 }}>Pago mensual ($) *</label>
+          <input value={form.pago_mensual} onChange={set('pago_mensual')} type="number" placeholder="0.00" min="0" step="0.01" style={inputS(t)}/>
+        </div>
+      </div>
+      <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:24, paddingTop:20, borderTop:`1px solid ${t.border}` }}>
+        <button onClick={onClose} style={{ all:'unset', cursor:'pointer', padding:'9px 18px', borderRadius:12, border:`1px solid ${t.border}`, color:t.text2, fontSize:14, fontWeight:600 }}>Cancelar</button>
+        <button onClick={save} style={primaryBtn(t)}>Guardar guardia</button>
+      </div>
     </ModalOverlay>
   );
 }
