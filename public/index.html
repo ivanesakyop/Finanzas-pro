@@ -67,11 +67,6 @@ nav button:hover { background:rgba(255,255,255,.07); color:#e5e7eb; }
 nav button.active { background:rgba(247,164,180,.16); color:#f7a4b4; }
 nav button .ico { font-size:15px; width:20px; text-align:center; }
 .sidebar-footer { padding:16px 20px; border-top:1px solid var(--sidebar-border); }
-.sf-btns { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
-.sf-btns button {
-  width:100%; padding:7px 10px; border-radius:7px; font-size:12px; font-weight:500;
-  cursor:pointer; font-family:var(--font-body); display:flex; align-items:center; gap:6px; transition:all .15s;
-}
 .auth-box {
   margin-top:12px;
   padding:12px;
@@ -95,10 +90,6 @@ nav button .ico { font-size:15px; width:20px; text-align:center; }
 }
 .btn-auth:hover { background:rgba(255,255,255,.16); }
 .btn-auth.secondary { background:transparent; color:#f0c7d0; }
-.btn-exp { background:rgba(247,164,180,.1); color:#f7a4b4; border:1px solid rgba(247,164,180,.28); }
-.btn-exp:hover { background:rgba(247,164,180,.18); }
-.btn-imp { background:rgba(255,240,244,.08); color:#f4c7d0; border:1px solid rgba(244,199,208,.2); }
-.btn-imp:hover { background:rgba(255,240,244,.16); }
 .sf-ver { font-size:11px; color:#b58a93; }
 
 /* ── MAIN ────────────────────────────────────── */
@@ -350,11 +341,6 @@ textarea { resize:vertical; min-height:68px; }
     <button onclick="showPage('clientes',this)"><span class="ico">🏢</span> Por Cliente</button>
   </nav>
   <div class="sidebar-footer">
-    <div class="sf-btns">
-      <button class="btn-exp" onclick="exportarDatos()">⬇️ Exportar datos</button>
-      <button class="btn-imp" onclick="document.getElementById('file-imp').click()">⬆️ Importar datos</button>
-      <input type="file" id="file-imp" accept=".json" style="display:none" onchange="importarDatos(event)">
-    </div>
     <div class="auth-box">
       <div class="auth-title">Cuenta</div>
       <div class="auth-status" id="auth-status">Modo local activo. Inicia sesión para guardar en la nube.</div>
@@ -800,31 +786,6 @@ async function enviarAcceso(){
 async function cerrarSesion(){
   if(!supabaseClient)return;
   await supabaseClient.auth.signOut();
-}
-
-// ════════════════════════════════════════════════
-// EXPORT / IMPORT
-// ════════════════════════════════════════════════
-function exportarDatos(){
-  const d={ingresos,gastos,exportado:new Date().toISOString()};
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));
-  a.download=`finanzas_backup_${new Date().toISOString().slice(0,10)}.json`;a.click();
-}
-function importarDatos(event){
-  const file=event.target.files[0];if(!file)return;
-  const reader=new FileReader();
-  reader.onload=async e=>{
-    try{
-      const d=JSON.parse(e.target.result);
-      if(!confirm(`¿Importar? Reemplazará los datos actuales.\nIngresos: ${(d.ingresos||[]).length} | Gastos: ${(d.gastos||[]).length}`))return;
-      ingresos=d.ingresos||[];gastos=d.gastos||[];
-      await save();
-      renderAll();
-      alert(currentUser?'✅ Datos importados y sincronizados con la nube.':'✅ Datos importados.');
-    }catch{alert('Archivo inválido.');}
-  };
-  reader.readAsText(file);event.target.value='';
 }
 
 // ════════════════════════════════════════════════
