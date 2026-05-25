@@ -1,39 +1,57 @@
-# Finanzas Pro Web
+# Finanzas Pro
 
-Esta carpeta es la base de la version web de tu app de finanzas.
+App web de control financiero personal. Registra ingresos y gastos, visualiza por categoría y cliente, y sincroniza datos entre dispositivos vía Supabase.
 
-## Que contiene
+## Stack
 
-- `public/index.html`
-  Version web inicial basada en tu app actual.
-- `public/app-config.example.js`
-  Plantilla para las variables publicas del frontend.
-- `supabase/schema.sql`
-  Tablas principales para guardar ingresos, gastos y configuracion.
-- `supabase/policies.sql`
-  Politicas de seguridad para que cada usuario vea solo sus datos.
-- `vercel.json`
-  Configuracion simple para publicar esta app en Vercel.
+- **Frontend:** React 18 (CDN) + Babel standalone — sin paso de build
+- **Auth:** Supabase magic link (OTP por correo)
+- **Base de datos:** Supabase (PostgreSQL) con Row Level Security
+- **Almacenamiento offline:** `localStorage` como fallback
+- **Deploy:** Vercel — `https://finanzas-pro-zeta.vercel.app`
 
-## Estado actual
+## Estructura
 
-La app sigue funcionando en modo local dentro del navegador, pero ya esta separada en un proyecto web para que el siguiente paso sea conectar datos en la nube.
+```
+public/
+  index.html          # App completa (React + JSX en un solo archivo)
+  app-config.js       # Credenciales locales (no commitear — ver .gitignore)
+  app-config.example.js  # Plantilla de configuración
+supabase/
+  schema.sql          # Tablas: ingresos, gastos, profiles, user_settings
+  policies.sql        # RLS: cada usuario accede solo a sus datos
+vercel.json           # Configuración de deploy
+```
 
-## Siguiente fase recomendada
+## Configuración local
 
-1. Crear un proyecto en Supabase.
-2. Ejecutar `schema.sql`.
-3. Ejecutar `policies.sql`.
-4. Copiar tus credenciales en `public/app-config.js` a partir del archivo de ejemplo.
-5. Adaptar el frontend para leer y guardar datos desde Supabase en lugar de `localStorage`.
-6. Publicar en Vercel o Netlify.
+1. Copia el archivo de ejemplo:
+   ```bash
+   cp public/app-config.example.js public/app-config.js
+   ```
+2. Llena tus credenciales de Supabase en `app-config.js`:
+   ```js
+   window.FINANZAS_CONFIG = {
+     storageMode: "supabase",
+     supabaseUrl: "https://TU_PROYECTO.supabase.co",
+     supabaseAnonKey: "TU_CLAVE_ANON",
+   };
+   ```
+3. Abre `public/index.html` en el navegador o sirve la carpeta `public/` con cualquier servidor estático.
 
-## Nota importante
+## Funcionalidades
 
-Todavia no active login ni persistencia en nube porque para eso necesitamos:
+- **Dashboard** — resumen del mes, gráfica de flujo, donut por categoría, top clientes
+- **Comparativo** — comparación entre meses con gráfica de barras y tendencia
+- **Ingresos / Gastos** — listado con filtros por período y categoría, búsqueda, eliminación
+- **Por Categoría** — concentración de gasto por categoría
+- **Por Cliente** — ranking de clientes por ingreso
+- **Modo claro / oscuro**
+- **Sincronización en la nube** — los datos se guardan en Supabase y están disponibles en cualquier dispositivo al iniciar sesión
 
-- la URL del proyecto de Supabase
-- la clave publica anon
-- decidir si quieres acceso solo para ti o para varios usuarios
+## Seguridad
 
-Cuando quieras, el siguiente paso que hago es conectar esta base a Supabase.
+- RLS habilitado en todas las tablas (`auth.uid() = user_id`)
+- Auth sin contraseñas — solo magic link por correo
+- `app-config.js` excluido de git para evitar exponer credenciales
+- Redirect URLs de Supabase restringidas al dominio de producción y localhost
