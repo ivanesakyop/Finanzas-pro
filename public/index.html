@@ -1863,71 +1863,29 @@ function ImportarExcelModal({ t, onClose, onSave }) {
       const ws     = wb.Sheets[wsName];
       if (!ws) { setErr('No se encontró ninguna hoja válida.'); setLoading(false); return; }
 
-      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      // Leer como objetos usando la primera fila como encabezado
+      const rows = XLSX.utils.sheet_to_json(ws, { raw:true, defval:null });
       const items = [];
 
-      // ── Estrategia 1: sheet_to_json con header:1 ─────────────
-      const rows = XLSX.utils.sheet_to_json(ws, { header:1, raw:true, defval:null });
-      let headerRow = -1, colIng = -1, colIngM = -1, colGast = -1, colGastM = -1;
-
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        if (!row || !Array.isArray(row)) continue;
-        const ingIdx  = row.findIndex(v => v != null && String(v).trim().toLowerCase() === 'ingreso');
-        const gastIdx = row.findIndex(v => v != null && String(v).trim().toLowerCase() === 'gasto');
-        if (ingIdx >= 0 && gastIdx >= 0) {
-          colIng = ingIdx; colIngM = ingIdx + 1;
-          colGast = gastIdx; colGastM = gastIdx + 1;
-          headerRow = i; break;
-        }
+      for (const row of rows) {
+        // Buscar las columnas ignorando mayúsculas/minúsculas y espacios
+        const keys = Object.keys(row);
+        const kTipo   = keys.find(k => k.trim().toLowerCase() === 'tipo');
+        const kNombre = keys.find(k => k.trim().toLowerCase() === 'nombre');
+        const kMonto  = keys.find(k => k.trim().toLowerCase() === 'monto');
+        if (!kTipo || !kNombre) continue;
+        const tipo   = String(row[kTipo]  || '').trim().toLowerCase();
+        const nombre = String(row[kNombre]|| '').trim();
+        const monto  = Number(row[kMonto] || 0) || 0;
+        if (!nombre) continue;
+        if (tipo === 'ingreso') items.push({ tipo:'ingreso', nombre, monto });
+        if (tipo === 'gasto')   items.push({ tipo:'gasto',   nombre, monto, categoria:categoriaPorNombre(nombre) });
       }
 
-      // ── Estrategia 2: encode_cell buscando celda por celda ────
-      if (headerRow < 0) {
-        for (let r = range.s.r; r <= Math.min(range.s.r + 40, range.e.r); r++) {
-          for (let c = range.s.c; c <= range.e.c; c++) {
-            const cell = ws[XLSX.utils.encode_cell({r, c})];
-            if (!cell) continue;
-            const v = String(cell.v ?? cell.w ?? '').trim().toLowerCase();
-            if (v === 'ingreso' && colIng < 0) { colIng = c; colIngM = c + 1; }
-            if (v === 'gasto'   && colGast < 0) { colGast = c; colGastM = c + 1; }
-          }
-          if (colIng >= 0 && colGast >= 0) { headerRow = r; break; }
-          colIng = -1; colGast = -1; // reset si no están en la misma fila
-        }
-      }
-
-      // ── Diagnóstico si ambas estrategias fallan ───────────────
-      if (headerRow < 0) {
-        // Muestra las primeras celdas con contenido para debuggear
-        const muestra = [];
-        for (let r = range.s.r; r <= Math.min(range.s.r + 10, range.e.r); r++) {
-          for (let c = range.s.c; c <= Math.min(range.e.c, range.s.c + 7); c++) {
-            const cell = ws[XLSX.utils.encode_cell({r, c})];
-            if (cell && cell.v != null) {
-              muestra.push(`[${XLSX.utils.encode_cell({r,c})}]=${JSON.stringify(cell.v)}(${cell.t})`);
-            }
-          }
-        }
-        setErr('No se encontró la cabecera. Primeras celdas: ' + (muestra.slice(0,12).join(', ') || '(vacío)'));
+      if (!items.length) {
+        setErr('No se encontraron datos. Verifica que la hoja tenga columnas "Tipo", "Nombre" y "Monto" en la primera fila, y valores "ingreso" o "gasto" en la columna Tipo.');
         setLoading(false); return;
       }
-
-      // ── Leer datos ────────────────────────────────────────────
-      for (let i = headerRow + 1; i < rows.length; i++) {
-        const row = rows[i];
-        if (!row) continue;
-        const ingNombre  = row[colIng];
-        const ingMonto   = row[colIngM];
-        const gastNombre = row[colGast];
-        const gastMonto  = row[colGastM];
-        if (ingNombre  && typeof ingNombre  === 'string' && ingNombre.trim())
-          items.push({ tipo:'ingreso', nombre:ingNombre.trim(),  monto:Number(ingMonto)||0 });
-        if (gastNombre && typeof gastNombre === 'string' && gastNombre.trim())
-          items.push({ tipo:'gasto',   nombre:gastNombre.trim(), monto:Number(gastMonto)||0, categoria:categoriaPorNombre(gastNombre) });
-      }
-
-      if (!items.length) { setErr('No se encontraron datos después de la cabecera.'); setLoading(false); return; }
       setPreview(items);
     } catch(ex) { setErr('Error al leer el archivo: ' + ex.message); }
     setLoading(false);
@@ -1946,10 +1904,18 @@ function ImportarExcelModal({ t, onClose, onSave }) {
       </div>
       {!preview ? (
         <>
-          <p style={{ fontSize:14, color:t.text2, marginBottom:20, lineHeight:1.6 }}>
-            Selecciona tu archivo <strong>.xlsx</strong>. Se leerá la hoja <strong>"Montos Fijos"</strong>
-            buscando las columnas <strong>Ingreso · Monto</strong> y <strong>Gasto · Monto</strong>.
+          <p style={{ fontSize:14, color:t.text2, marginBottom:12, lineHeight:1.6 }}>
+            Selecciona tu archivo <strong>.xlsx</strong>. La hoja debe tener tres columnas en la fila 1:
           </p>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6, marginBottom:16,
+            padding:'10px 14px', borderRadius:10, background:t.surfaceAlt, border:`1px solid ${t.border}` }}>
+            {[['Tipo','ingreso / gasto'],['Nombre','Quintacero / Nomina'],['Monto','15660 / 0']].map(([h,ex]) => (
+              <div key={h} style={{ textAlign:'center' }}>
+                <div style={{ fontWeight:700, fontSize:13, color:t.text, fontFamily:"'JetBrains Mono'" }}>{h}</div>
+                <div style={{ fontSize:11, color:t.muted, marginTop:2 }}>{ex}</div>
+              </div>
+            ))}
+          </div>
           {err && <div style={{ padding:'10px 14px', borderRadius:9, background:t.negSoft, color:t.neg, fontSize:13, marginBottom:14 }}>{err}</div>}
           <label style={{ display:'block', cursor:'pointer', padding:'32px', borderRadius:14,
             border:`2px dashed ${t.border}`, textAlign:'center', background:t.surfaceAlt }}>
