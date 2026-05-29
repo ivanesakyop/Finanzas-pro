@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Finanzas Pro</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#7a4f2e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Finanzas Pro">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -21,6 +26,11 @@ html, body { height:100%; width:100%; overflow:hidden; }
 ::-webkit-scrollbar-track { background:transparent; }
 ::-webkit-scrollbar-thumb { background:rgba(120,90,60,.2); border-radius:99px; }
 </style>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+  }
+</script>
 </head>
 <body>
 <div id="root"></div>
@@ -71,6 +81,22 @@ const CAT_META = {
   herramientas:{ label:'Herramientas', color:'#e6d6b8' },
   otros:       { label:'Otros',        color:'#b8a89a' },
 };
+const CUSTOM_CAT_COLORS = ['#9b6b4a','#c4956a','#6b8e6b','#5a7a8c','#8c6b8c','#8c8c5a','#6b6b8c'];
+function getCustomCats() { return DB.get('fp_custom_cats', {}); }
+function saveCustomCat(label) {
+  const key = label.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'') + '_' + Date.now().toString(36);
+  const existing = getCustomCats();
+  const color = CUSTOM_CAT_COLORS[Object.keys(existing).length % CUSTOM_CAT_COLORS.length];
+  const updated = { ...existing, [key]: { label, color } };
+  DB.set('fp_custom_cats', updated);
+  return key;
+}
+function getAllCats() { return { ...CAT_META, ...getCustomCats() }; }
+function getKnownClients() { return DB.get('fp_known_clients', []); }
+function addKnownClient(name) {
+  const list = getKnownClients();
+  if (!list.includes(name)) DB.set('fp_known_clients', [...list, name]);
+}
 const PAGES = [
   { key:'dashboard',   label:'Dashboard',     sub:'Resumen ejecutivo del mes actual' },
   { key:'comparativo', label:'Comparativo',   sub:'Tendencias y balance mes a mes' },
@@ -269,6 +295,7 @@ function App() {
       try { await saveCloud(supaClient, currentUser, next, gastos); }
       catch { showToast('Guardado local. Sin conexión a la nube.', 'warn'); }
     }
+    addKnownClient(data.cliente);
     setModal(null); showToast('Ingreso registrado', 'ok');
   };
 
@@ -414,15 +441,15 @@ function App() {
 
   const movimientos = useMemo(() => [
     ...ingresos.map(x => ({ ...x, tipo:'in',  who:x.cliente, concept:x.concepto||'' })),
-    ...gastos.map(x   => ({ ...x, tipo:'out', who:CAT_META[x.categoria]?.label||x.categoria, concept:x.descripcion })),
+    ...gastos.map(x   => ({ ...x, tipo:'out', who:getAllCats()[x.categoria]?.label||x.categoria, concept:x.descripcion })),
   ].sort((a,b) => b.fecha.localeCompare(a.fecha)).slice(0,8), [ingresos, gastos]);
 
   const categorias = useMemo(() => {
     const gastTotal = gastos.reduce((s,x) => s+x.monto, 0);
-    return Object.keys(CAT_META).map(k => {
+    return Object.keys(getAllCats()).map(k => {
       const recs = gastos.filter(x => x.categoria === k);
       const total = recs.reduce((s,x) => s+x.monto, 0);
-      return { key:k, ...CAT_META[k], total, count:recs.length, pct: gastTotal ? total/gastTotal*100 : 0,
+      return { key:k, ...getAllCats()[k], total, count:recs.length, pct: gastTotal ? total/gastTotal*100 : 0,
         esteMes: recs.filter(x => x.periodo === mes).reduce((s,x) => s+x.monto, 0),
         esteAno: recs.filter(x => x.periodo?.startsWith(ano)).reduce((s,x) => s+x.monto, 0),
       };
@@ -1078,11 +1105,11 @@ function GastPage({ t, gastos, mes, ano, onAdd, onDelete, onEdit }) {
   const totalMes = gastos.filter(x=>x.periodo===mes).reduce((s,x)=>s+x.monto,0);
   const totalAno = gastos.filter(x=>x.periodo?.startsWith(ano)).reduce((s,x)=>s+x.monto,0);
   const periodos = ['todos',...[...new Set(gastos.map(x=>x.periodo))].sort().reverse()];
-  const cats = ['todos',...Object.keys(CAT_META)];
+  const cats = ['todos',...Object.keys(getAllCats())];
   const filtrados = gastos.filter(x=>{
     const q=query.toLowerCase();
     return (filtro==='todos'||x.periodo===filtro) && (filtroCat==='todos'||x.categoria===filtroCat)
-      && (x.descripcion.toLowerCase().includes(q)||(CAT_META[x.categoria]?.label||'').toLowerCase().includes(q));
+      && (x.descripcion.toLowerCase().includes(q)||(getAllCats()[x.categoria]?.label||'').toLowerCase().includes(q));
   }).sort((a,b)=>b.fecha.localeCompare(a.fecha));
   return (
     <>
@@ -1107,7 +1134,7 @@ function GastPage({ t, gastos, mes, ano, onAdd, onDelete, onEdit }) {
           {periodos.slice(0,8).map(p=><button key={p} onClick={()=>setFiltro(p)} style={pillS(t,filtro===p)}>{p==='todos'?'Todos los períodos':mesLabel(p)}</button>)}
         </div>
         <div style={{ display:'flex',gap:8,flexWrap:'wrap' }}>
-          {cats.map(c=><button key={c} onClick={()=>setFiltroCat(c)} style={pillS(t,filtroCat===c)}>{c==='todos'?'Todas las categorías':CAT_META[c].label}</button>)}
+          {cats.map(c=><button key={c} onClick={()=>setFiltroCat(c)} style={pillS(t,filtroCat===c)}>{c==='todos'?'Todas las categorías':(getAllCats()[c]?.label||c)}</button>)}
         </div>
       </div>
       <div style={cardS(t,{padding:0,overflow:'hidden'})}>
@@ -1120,7 +1147,7 @@ function GastPage({ t, gastos, mes, ano, onAdd, onDelete, onEdit }) {
           <tbody>
             {filtrados.length===0 && <tr><td colSpan={7} style={{ padding:40,textAlign:'center',color:t.muted,fontSize:14 }}>Sin coincidencias</td></tr>}
             {filtrados.map((x)=>{
-              const cat=CAT_META[x.categoria]||{label:x.categoria,color:t.muted};
+              const cat=getAllCats()[x.categoria]||{label:x.categoria,color:t.muted};
               return (
                 <tr key={x.id} style={{ borderTop:`1px solid ${t.border}` }}>
                   <td style={{ padding:'14px 18px',fontSize:13.5,color:t.text2 }}>{fmtFecha(x.fecha)}</td>
@@ -1336,6 +1363,7 @@ function IngresoModal({ t, onClose, onSave, editData }) {
     ? { cliente:editData.cliente, monto:String(editData.monto), fecha:editData.fecha, periodo:editData.periodo, concepto:editData.concepto||'', notas:editData.notas||'' }
     : { cliente:'', monto:'', fecha:hoy(), periodo:mesPeriodo(), concepto:'', notas:'' });
   const [err, setErr] = useState('');
+  const [knownClients] = useState(() => getKnownClients());
   const set = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const save = () => {
     if (!form.cliente || !form.monto || !form.fecha) { setErr('Completa los campos obligatorios.'); return; }
@@ -1353,7 +1381,10 @@ function IngresoModal({ t, onClose, onSave, editData }) {
       <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:14 }}>
         <div style={{ gridColumn:'1/-1' }}>
           <label style={{ fontSize:13,color:t.text2,fontWeight:500,display:'block',marginBottom:6 }}>Cliente *</label>
-          <input value={form.cliente} onChange={set('cliente')} placeholder="Nombre del cliente" style={inputS(t)}/>
+          <input value={form.cliente} onChange={set('cliente')} placeholder="Nombre del cliente" list="known-clients-list" style={inputS(t)}/>
+          <datalist id="known-clients-list">
+            {knownClients.map(c=><option key={c} value={c}/>)}
+          </datalist>
         </div>
         <div>
           <label style={{ fontSize:13,color:t.text2,fontWeight:500,display:'block',marginBottom:6 }}>Monto ($) *</label>
@@ -1390,7 +1421,22 @@ function GastoModal({ t, onClose, onSave, editData }) {
     ? { categoria:editData.categoria||'nomina', monto:String(editData.monto), fecha:editData.fecha, periodo:editData.periodo, descripcion:editData.descripcion||'', notas:editData.notas||'' }
     : { categoria:'nomina', monto:'', fecha:hoy(), periodo:mesPeriodo(), descripcion:'', notas:'' });
   const [err, setErr] = useState('');
+  const [newCat, setNewCat] = useState('');
+  const [showNewCat, setShowNewCat] = useState(false);
+  const [allCats, setAllCats] = useState(() => getAllCats());
   const set = k => e => setForm(f=>({...f,[k]:e.target.value}));
+  const handleCatChange = e => {
+    if (e.target.value === '__nuevo__') { setShowNewCat(true); }
+    else { setForm(f=>({...f,categoria:e.target.value})); }
+  };
+  const confirmNewCat = () => {
+    const label = newCat.trim();
+    if (!label) return;
+    const key = saveCustomCat(label);
+    setAllCats(getAllCats());
+    setForm(f=>({...f,categoria:key}));
+    setShowNewCat(false); setNewCat('');
+  };
   const save = () => {
     if (!form.fecha||!form.descripcion) { setErr('Completa los campos obligatorios.'); return; }
     const monto=parseFloat(form.monto);
@@ -1407,9 +1453,18 @@ function GastoModal({ t, onClose, onSave, editData }) {
       <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:14 }}>
         <div>
           <label style={{ fontSize:13,color:t.text2,fontWeight:500,display:'block',marginBottom:6 }}>Categoría *</label>
-          <select value={form.categoria} onChange={set('categoria')} style={selectS(t)}>
-            {Object.entries(CAT_META).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
-          </select>
+          {showNewCat ? (
+            <div style={{ display:'flex',gap:6 }}>
+              <input value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>e.key==='Enter'&&confirmNewCat()} autoFocus placeholder="Nombre de categoría" style={{...inputS(t),flex:1}}/>
+              <button onClick={confirmNewCat} style={primaryBtn(t)}>+</button>
+              <button onClick={()=>setShowNewCat(false)} style={{ all:'unset',cursor:'pointer',padding:'9px 12px',borderRadius:12,border:`1px solid ${t.border}`,color:t.text2,fontSize:14 }}>✕</button>
+            </div>
+          ) : (
+            <select value={form.categoria} onChange={handleCatChange} style={selectS(t)}>
+              {Object.entries(allCats).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+              <option value="__nuevo__">+ Nueva categoría…</option>
+            </select>
+          )}
         </div>
         <div>
           <label style={{ fontSize:13,color:t.text2,fontWeight:500,display:'block',marginBottom:6 }}>Monto ($) *</label>
@@ -1807,7 +1862,7 @@ function MontosPage({ t, plantillaFija, mes, onImport, onBulkLoad, onDeleteItem,
                 <tbody>
                   {lista.map((x) => {
                     const idx = plantillaFija.indexOf(x);
-                    const cat = CAT_META[x.categoria] || { label:'Otros', color:t.muted };
+                    const cat = getAllCats()[x.categoria] || { label:x.categoria||'Otros', color:t.muted };
                     return (
                       <tr key={idx} style={{ borderTop:`1px solid ${t.border}` }}>
                         <td style={{ padding:'12px 18px', fontSize:13.5, fontWeight:600, color:t.text }}>{x.nombre}</td>

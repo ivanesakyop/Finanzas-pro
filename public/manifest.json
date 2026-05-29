@@ -1,0 +1,21 @@
+{
+  "name": "Finanzas Pro",
+  "short_name": "Finanzas Pro",
+  "description": "Control de ingresos y gastos",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf6f0",
+  "theme_color": "#7a4f2e",
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/icon-192.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
