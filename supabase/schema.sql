@@ -44,6 +44,18 @@ create table if not exists public.user_settings (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.montos_fijos (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  tipo text not null check (tipo in ('ingreso', 'gasto')),
+  nombre text not null,
+  monto numeric(12,2) not null default 0 check (monto >= 0),
+  categoria text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists montos_fijos_user_id_idx on public.montos_fijos(user_id);
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
