@@ -363,6 +363,11 @@ function App() {
     savePlantilla(next);
   };
 
+  const editItemPlantilla = (idx, nuevoMonto) => {
+    const next = plantillaFija.map((x, i) => i === idx ? { ...x, monto: nuevoMonto } : x);
+    savePlantilla(next);
+  };
+
   const bulkLoadPlantilla = async (periodo) => {
     const [year, month] = periodo.split('-');
     const fecha = `${year}-${month}-01`;
@@ -491,7 +496,7 @@ function App() {
           {page === 'categorias'  && <CatPage t={t} categorias={categorias} gastos={gastos} />}
           {page === 'clientes'    && <CliPage t={t} clientes={clientes} totals={totals} />}
           {page === 'operaciones' && <OpsPage t={t} empresas={empresas} guardias={guardias} onAddEmpresa={() => setModal('empresa')} onAddGuardia={() => setModal('guardia')} onDeleteEmpresa={deleteEmpresa} onDeleteGuardia={deleteGuardia} />}
-          {page === 'montos'      && <MontosPage t={t} plantillaFija={plantillaFija} mes={mes} onImport={() => setModal('importExcel')} onBulkLoad={bulkLoadPlantilla} onDeleteItem={deleteItemPlantilla} />}
+          {page === 'montos'      && <MontosPage t={t} plantillaFija={plantillaFija} mes={mes} onImport={() => setModal('importExcel')} onBulkLoad={bulkLoadPlantilla} onDeleteItem={deleteItemPlantilla} onEditItem={editItemPlantilla} />}
         </div>
       </div>
       {modal === 'ingreso'  && <IngresoModal  t={t} onClose={() => setModal(null)} onSave={addIngreso} />}
@@ -1734,12 +1739,46 @@ function GuardiaModal({ t, onClose, onSave, empresas }) {
 // ════════════════════════════════════════════════════════════
 // MONTOS FIJOS PAGE
 // ════════════════════════════════════════════════════════════
-function MontosPage({ t, plantillaFija, mes, onImport, onBulkLoad, onDeleteItem }) {
+function MontosPage({ t, plantillaFija, mes, onImport, onBulkLoad, onDeleteItem, onEditItem }) {
   const [periodoTarget, setPeriodoTarget] = useState(mes);
+  const [editIdx, setEditIdx] = useState(null);
+  const [editVal, setEditVal] = useState('');
   const ingresos = plantillaFija.filter(x => x.tipo === 'ingreso');
   const gastos   = plantillaFija.filter(x => x.tipo === 'gasto');
   const totalIng = ingresos.reduce((s,x) => s+x.monto, 0);
   const totalGast = gastos.reduce((s,x) => s+x.monto, 0);
+
+  const startEdit = (globalIdx, monto) => { setEditIdx(globalIdx); setEditVal(String(monto)); };
+  const confirmEdit = (globalIdx) => {
+    const v = parseFloat(editVal);
+    if (!isNaN(v) && v >= 0) onEditItem(globalIdx, v);
+    setEditIdx(null);
+  };
+  const keyEdit = (e, globalIdx) => {
+    if (e.key === 'Enter') confirmEdit(globalIdx);
+    if (e.key === 'Escape') setEditIdx(null);
+  };
+
+  const MontoCell = ({ x, color }) => {
+    const globalIdx = plantillaFija.indexOf(x);
+    if (editIdx === globalIdx) return (
+      <td style={{ padding:'8px 12px', textAlign:'right' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:6, justifyContent:'flex-end' }}>
+          <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)}
+            onKeyDown={e => keyEdit(e, globalIdx)} type="number" min="0" step="0.01"
+            style={{ ...inputS(t), width:110, padding:'5px 9px', fontSize:13, textAlign:'right', fontFamily:"'JetBrains Mono'" }}/>
+          <button onClick={() => confirmEdit(globalIdx)}
+            style={{ all:'unset', cursor:'pointer', padding:'5px 10px', borderRadius:8,
+              background:t.text, color:t.bg, fontSize:12, fontWeight:600 }}>✓</button>
+        </div>
+      </td>
+    );
+    return (
+      <td style={{ padding:'12px 18px', textAlign:'right', fontFamily:"'JetBrains Mono'", fontWeight:600, color: x.monto===0 ? t.muted : color, fontSize:13.5 }}>
+        {x.monto === 0 ? <em style={{ fontSize:11, fontStyle:'italic' }}>Sin definir</em> : fmt(x.monto)}
+      </td>
+    );
+  };
 
   return (
     <>
@@ -1796,16 +1835,20 @@ function MontosPage({ t, plantillaFija, mes, onImport, onBulkLoad, onDeleteItem 
                 ))}
               </tr></thead>
               <tbody>
-                {ingresos.map((x, idx) => (
+                {ingresos.map((x, idx) => {
+                  const gi = plantillaFija.indexOf(x);
+                  return (
                   <tr key={idx} style={{ borderTop:`1px solid ${t.border}` }}>
                     <td style={{ padding:'12px 18px', fontSize:13.5, fontWeight:600, color:t.text }}>{x.nombre}</td>
-                    <td style={{ padding:'12px 18px', textAlign:'right', fontFamily:"'JetBrains Mono'", fontWeight:600, color:t.pos, fontSize:13.5 }}>{fmt(x.monto)}</td>
-                    <td style={{ padding:'12px 18px', textAlign:'right' }}>
-                      <button onClick={() => { if(confirm(`¿Quitar ${x.nombre} de la plantilla?`)) onDeleteItem(plantillaFija.indexOf(x)); }}
+                    <MontoCell x={x} color={t.pos} />
+                    <td style={{ padding:'12px 18px', textAlign:'right', display:'flex', gap:4, justifyContent:'flex-end' }}>
+                      <button onClick={() => startEdit(gi, x.monto)} style={iconBtn(t)} title="Editar monto">{IcoEdit}</button>
+                      <button onClick={() => { if(confirm(`¿Quitar ${x.nombre} de la plantilla?`)) onDeleteItem(gi); }}
                         style={iconBtn(t)} title="Quitar">{IcoTrash}</button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1829,6 +1872,7 @@ function MontosPage({ t, plantillaFija, mes, onImport, onBulkLoad, onDeleteItem 
               <tbody>
                 {gastos.map((x, idx) => {
                   const cat = CAT_META[x.categoria] || { label:'Otros', color:t.muted };
+                  const gi = plantillaFija.indexOf(x);
                   return (
                     <tr key={idx} style={{ borderTop:`1px solid ${t.border}` }}>
                       <td style={{ padding:'12px 18px', fontSize:13.5, fontWeight:600, color:t.text }}>{x.nombre}</td>
@@ -1838,12 +1882,10 @@ function MontosPage({ t, plantillaFija, mes, onImport, onBulkLoad, onDeleteItem 
                           <span style={{ width:6, height:6, borderRadius:99, background:cat.color }}/>{cat.label}
                         </span>
                       </td>
-                      <td style={{ padding:'12px 18px', textAlign:'right', fontFamily:"'JetBrains Mono'", fontWeight:600,
-                        color:x.monto===0?t.muted:t.neg, fontSize:13.5 }}>
-                        {x.monto === 0 ? <span style={{ fontSize:11, fontStyle:'italic' }}>Por definir</span> : `−${fmt(x.monto)}`}
-                      </td>
-                      <td style={{ padding:'12px 18px', textAlign:'right' }}>
-                        <button onClick={() => { if(confirm(`¿Quitar ${x.nombre} de la plantilla?`)) onDeleteItem(plantillaFija.indexOf(x)); }}
+                      <MontoCell x={x} color={t.neg} />
+                      <td style={{ padding:'12px 18px', textAlign:'right', display:'flex', gap:4, justifyContent:'flex-end' }}>
+                        <button onClick={() => startEdit(gi, x.monto)} style={iconBtn(t)} title="Editar monto">{IcoEdit}</button>
+                        <button onClick={() => { if(confirm(`¿Quitar ${x.nombre} de la plantilla?`)) onDeleteItem(gi); }}
                           style={iconBtn(t)} title="Quitar">{IcoTrash}</button>
                       </td>
                     </tr>
