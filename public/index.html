@@ -1880,7 +1880,7 @@ function ImportarExcelModal({ t, onClose, onSave }) {
       if (!ws) { setErr('No se encontró ninguna hoja válida.'); setLoading(false); return; }
       const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:null, raw:true });
       const items = [];
-      // Find the EXACT header row: must have BOTH 'ingreso' AND 'gasto' as exact cell values
+      // Find the EXACT header row: must have 'Ingreso'+'Monto' pair AND 'Gasto'+'Monto' pair
       let startRow = 0;
       let colIng = 1, colIngM = 2, colGast = 4, colGastM = 5;
       for (let i = 0; i < rows.length; i++) {
@@ -1888,7 +1888,11 @@ function ImportarExcelModal({ t, onClose, onSave }) {
         if (!r) continue;
         const ingIdx  = r.findIndex(v => v != null && String(v).trim().toLowerCase() === 'ingreso');
         const gastIdx = r.findIndex(v => v != null && String(v).trim().toLowerCase() === 'gasto');
-        if (ingIdx >= 0 && gastIdx > ingIdx) {
+        if (ingIdx < 0 || gastIdx <= ingIdx) continue;
+        // The cell right after 'Ingreso' and right after 'Gasto' must say 'Monto'
+        const montoIng  = r[ingIdx + 1]  != null && String(r[ingIdx + 1]).trim().toLowerCase().includes('monto');
+        const montoGast = r[gastIdx + 1] != null && String(r[gastIdx + 1]).trim().toLowerCase().includes('monto');
+        if (montoIng && montoGast) {
           colIng = ingIdx; colIngM = ingIdx + 1;
           colGast = gastIdx; colGastM = gastIdx + 1;
           startRow = i + 1;
