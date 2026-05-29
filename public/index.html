@@ -11,6 +11,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="./app-config.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -71,13 +72,14 @@ const CAT_META = {
   otros:       { label:'Otros',        color:'#b8a89a' },
 };
 const PAGES = [
-  { key:'dashboard',   label:'Dashboard',     sub:'Resumen ejecutivo del mes actual' },
-  { key:'comparativo', label:'Comparativo',   sub:'Tendencias y balance mes a mes' },
-  { key:'ingresos',    label:'Ingresos',      sub:'Registro de pagos recibidos' },
-  { key:'gastos',      label:'Gastos',        sub:'Nómina y gastos operativos' },
-  { key:'categorias',  label:'Por categoría', sub:'Dónde se concentra el gasto' },
-  { key:'clientes',    label:'Por cliente',   sub:'Quién aporta más al ingreso' },
-  { key:'operaciones', label:'Operaciones',   sub:'Empresas, guardias y rentabilidad mensual' },
+  { key:'dashboard',   label:'Dashboard',      sub:'Resumen ejecutivo del mes actual' },
+  { key:'comparativo', label:'Comparativo',    sub:'Tendencias y balance mes a mes' },
+  { key:'ingresos',    label:'Ingresos',       sub:'Registro de pagos recibidos' },
+  { key:'gastos',      label:'Gastos',         sub:'Nómina y gastos operativos' },
+  { key:'categorias',  label:'Por categoría',  sub:'Dónde se concentra el gasto' },
+  { key:'clientes',    label:'Por cliente',    sub:'Quién aporta más al ingreso' },
+  { key:'operaciones', label:'Operaciones',    sub:'Empresas, guardias y rentabilidad mensual' },
+  { key:'montos',      label:'Montos Fijos',   sub:'Plantilla mensual · importar y replicar automáticamente' },
 ];
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
@@ -97,6 +99,15 @@ const fmtFecha = iso => {
   if (!iso) return '—';
   const [y, mo, d] = iso.split('-');
   return `${parseInt(d)} ${MESES[parseInt(mo)-1]} ${y.slice(2)}`;
+};
+const categoriaPorNombre = nombre => {
+  const n = (nombre || '').toLowerCase();
+  if (n.includes('nomina') || n.includes('nómina') || n.includes('imss')) return 'nomina';
+  if (n.includes('gasolina') || n.includes('combustible')) return 'gasolina';
+  if (n.includes('renta')) return 'renta';
+  if (n.includes('luz') || n.includes('agua') || n.includes('internet') || n.includes('equipo') || n.includes('movil') || n.includes('móvil')) return 'servicios';
+  if (n.includes('contador') || n.includes('herramienta')) return 'otros';
+  return 'otros';
 };
 const hoy = () => new Date().toISOString().slice(0,10);
 const mesPeriodo = () => new Date().toISOString().slice(0,7);
@@ -142,6 +153,10 @@ const IcoX = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWi
 const IcoKey = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="6" cy="8" r="3.5"/><path d="M9 8h5M12 6v4" strokeLinecap="round"/></svg>;
 const IcoBriefcase = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="2" y="6" width="12" height="8" rx="1.5"/><path d="M5 6V5a2 2 0 014 0v1" strokeLinecap="round"/><line x1="2" y1="10" x2="14" y2="10"/></svg>;
 const IcoChevron = (open) => <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ transform: open?'rotate(180deg)':'none', transition:'transform .2s' }}><path d="M4 6l4 4 4-4" strokeLinecap="round"/></svg>;
+const IcoEdit = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M11 2.5l2.5 2.5L5 13.5H2.5V11L11 2.5Z" strokeLinejoin="round"/></svg>;
+const IcoFile = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M9 2H4a1 1 0 00-1 1v10a1 1 0 001 1h8a1 1 0 001-1V6L9 2Z"/><path d="M9 2v4h4" strokeLinecap="round"/></svg>;
+const IcoSettings = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" strokeLinecap="round"/></svg>;
+const IcoUpload = <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M8 10V3M5 6L8 3l3 3" strokeLinecap="round" strokeLinejoin="round"/><path d="M3 12h10" strokeLinecap="round"/></svg>;
 
 // ════════════════════════════════════════════════════════════
 // APP
@@ -159,6 +174,7 @@ function App() {
   const [lastSync, setLastSync] = useState(null);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState(null);
+  const [plantillaFija, setPlantillaFija] = useState(() => DB.get('fp_plantilla', []));
   const t = THEMES[mode];
 
   // ── Supabase init
@@ -225,11 +241,12 @@ function App() {
 
   const loadCloud = async (client, user) => {
     setSyncStatus('syncing');
-    const [{ data:ingData, error:e1 }, { data:gastData, error:e2 }, { data:empData, error:e3 }, { data:guardData, error:e4 }] = await Promise.all([
+    const [{ data:ingData, error:e1 }, { data:gastData, error:e2 }, { data:empData, error:e3 }, { data:guardData, error:e4 }, { data:plantData, error:e5 }] = await Promise.all([
       client.from('ingresos').select('*').eq('user_id', user.id).order('fecha', { ascending:false }),
       client.from('gastos').select('*').eq('user_id', user.id).order('fecha', { ascending:false }),
       client.from('empresas').select('*').eq('user_id', user.id).order('created_at', { ascending:true }),
       client.from('guardias').select('*').eq('user_id', user.id).order('created_at', { ascending:true }),
+      client.from('montos_fijos').select('*').eq('user_id', user.id).order('created_at', { ascending:true }),
     ]);
     if (e1 || e2 || e3 || e4) { setSyncStatus('error'); return; }
     const ing   = (ingData||[]).map(r => ({ id:r.id, cliente:r.cliente, monto:Number(r.monto), fecha:r.fecha, periodo:r.periodo, concepto:r.concepto||'', notas:r.notas||'' }));
@@ -239,6 +256,10 @@ function App() {
     setIngresos(ing); setGastos(gast); setEmpresas(emps); setGuardias(guards);
     persistLocal(ing, gast);
     DB.set('fp_empresas', emps); DB.set('fp_guardias', guards);
+    if (!e5 && plantData) {
+      const plant = plantData.map(r => ({ id:r.id, tipo:r.tipo, nombre:r.nombre, monto:Number(r.monto), categoria:r.categoria||'' }));
+      setPlantillaFija(plant); DB.set('fp_plantilla', plant);
+    }
     setSyncStatus('synced'); setLastSync(new Date());
   };
 
@@ -317,6 +338,68 @@ function App() {
   const showToast = (msg, type) => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const savePlantillaCloud = async (client, user, plantilla) => {
+    await client.from('montos_fijos').delete().eq('user_id', user.id);
+    if (plantilla.length) {
+      const rows = plantilla.map(x => ({ user_id:user.id, tipo:x.tipo, nombre:x.nombre, monto:x.monto, categoria:x.categoria||null }));
+      const { error } = await client.from('montos_fijos').insert(rows);
+      if (error) throw error;
+    }
+  };
+
+  const savePlantilla = async (nueva) => {
+    setPlantillaFija(nueva); DB.set('fp_plantilla', nueva);
+    if (supaClient && currentUser) {
+      try { await savePlantillaCloud(supaClient, currentUser, nueva); }
+      catch { showToast('Guardada local. Sin conexión a la nube.', 'warn'); return; }
+    }
+    showToast('Plantilla de montos fijos guardada', 'ok');
+  };
+
+  const deleteItemPlantilla = idx => {
+    const next = plantillaFija.filter((_, i) => i !== idx);
+    savePlantilla(next);
+  };
+
+  const bulkLoadPlantilla = async (periodo) => {
+    const [year, month] = periodo.split('-');
+    const fecha = `${year}-${month}-01`;
+    const nuevosIng = plantillaFija
+      .filter(x => x.tipo === 'ingreso')
+      .map(x => ({ id:crypto.randomUUID(), cliente:x.nombre, monto:x.monto, fecha, periodo, concepto:'Monto fijo', notas:'' }));
+    const nuevosGast = plantillaFija
+      .filter(x => x.tipo === 'gasto')
+      .map(x => ({ id:crypto.randomUUID(), categoria:x.categoria||'otros', monto:x.monto, fecha, periodo, descripcion:x.nombre, otrosDetalle:'', notas:'' }));
+    const nextIng = [...ingresos, ...nuevosIng];
+    const nextGast = [...gastos, ...nuevosGast];
+    setIngresos(nextIng); setGastos(nextGast); persistLocal(nextIng, nextGast);
+    if (supaClient && currentUser) {
+      try { await saveCloud(supaClient, currentUser, nextIng, nextGast); }
+      catch { showToast('Guardado local. Sin conexión a la nube.', 'warn'); }
+    }
+    showToast(`${nuevosIng.length + nuevosGast.length} registros cargados para ${mesLabel(periodo)}`, 'ok');
+  };
+
+  const editIngreso = async (id, data) => {
+    const next = ingresos.map(x => x.id === id ? { ...x, ...data } : x);
+    setIngresos(next); persistLocal(next, gastos);
+    if (supaClient && currentUser) {
+      try { await saveCloud(supaClient, currentUser, next, gastos); }
+      catch { showToast('Guardado local. Sin conexión a la nube.', 'warn'); }
+    }
+    setModal(null); showToast('Ingreso actualizado', 'ok');
+  };
+
+  const editGasto = async (id, data) => {
+    const next = gastos.map(x => x.id === id ? { ...x, ...data } : x);
+    setGastos(next); persistLocal(ingresos, next);
+    if (supaClient && currentUser) {
+      try { await saveCloud(supaClient, currentUser, ingresos, next); }
+      catch { showToast('Guardado local. Sin conexión a la nube.', 'warn'); }
+    }
+    setModal(null); showToast('Gasto actualizado', 'ok');
   };
 
   // ── Derived data
@@ -400,14 +483,15 @@ function App() {
           syncLabel={syncLabel()} syncStatus={syncStatus} currentUser={currentUser}
           onAddIng={() => setModal('ingreso')} onAddGast={() => setModal('gasto')} />
         <div style={{ padding:'24px 36px 48px' }}>
-          {page !== 'dashboard' && <PageHeader t={t} meta={PAGES.find(p=>p.key===page)} mes={mes} />}
-          {page === 'dashboard'   && <DashPage t={t} totals={totals} series={series} movimientos={movimientos} categorias={categorias} clientes={clientes} mes={mes} currentUser={currentUser} onAddIng={() => setModal('ingreso')} onAddGast={() => setModal('gasto')} />}
+          {page !== 'dashboard' && page !== 'montos' && <PageHeader t={t} meta={PAGES.find(p=>p.key===page)} mes={mes} />}
+          {page === 'dashboard'   && <DashPage t={t} totals={totals} series={series} movimientos={movimientos} categorias={categorias} clientes={clientes} mes={mes} currentUser={currentUser} onAddIng={() => setModal('ingreso')} onAddGast={() => setModal('gasto')} plantillaFija={plantillaFija} onBulkLoad={bulkLoadPlantilla} onGoMontos={() => setPage('montos')} />}
           {page === 'comparativo' && <ComparPage t={t} totals={totals} series={series} />}
-          {page === 'ingresos'    && <IngPage t={t} ingresos={ingresos} mes={mes} ano={ano} onAdd={() => setModal('ingreso')} onDelete={deleteIngreso} />}
-          {page === 'gastos'      && <GastPage t={t} gastos={gastos} mes={mes} ano={ano} onAdd={() => setModal('gasto')} onDelete={deleteGasto} />}
+          {page === 'ingresos'    && <IngPage t={t} ingresos={ingresos} mes={mes} ano={ano} onAdd={() => setModal('ingreso')} onDelete={deleteIngreso} onEdit={x => setModal({ type:'editIngreso', data:x })} />}
+          {page === 'gastos'      && <GastPage t={t} gastos={gastos} mes={mes} ano={ano} onAdd={() => setModal('gasto')} onDelete={deleteGasto} onEdit={x => setModal({ type:'editGasto', data:x })} />}
           {page === 'categorias'  && <CatPage t={t} categorias={categorias} gastos={gastos} />}
           {page === 'clientes'    && <CliPage t={t} clientes={clientes} totals={totals} />}
           {page === 'operaciones' && <OpsPage t={t} empresas={empresas} guardias={guardias} onAddEmpresa={() => setModal('empresa')} onAddGuardia={() => setModal('guardia')} onDeleteEmpresa={deleteEmpresa} onDeleteGuardia={deleteGuardia} />}
+          {page === 'montos'      && <MontosPage t={t} plantillaFija={plantillaFija} mes={mes} onImport={() => setModal('importExcel')} onBulkLoad={bulkLoadPlantilla} onDeleteItem={deleteItemPlantilla} />}
         </div>
       </div>
       {modal === 'ingreso'  && <IngresoModal  t={t} onClose={() => setModal(null)} onSave={addIngreso} />}
@@ -415,6 +499,9 @@ function App() {
       {modal === 'auth'     && <AuthModal     t={t} onClose={() => setModal(null)} supaClient={supaClient} />}
       {modal === 'empresa'  && <EmpresaModal  t={t} onClose={() => setModal(null)} onSave={addEmpresa} />}
       {modal === 'guardia'  && <GuardiaModal  t={t} onClose={() => setModal(null)} onSave={addGuardia} empresas={empresas} />}
+      {modal?.type === 'editIngreso' && <IngresoModal t={t} onClose={() => setModal(null)} onSave={data => editIngreso(modal.data.id, data)} editData={modal.data} />}
+      {modal?.type === 'editGasto'   && <GastoModal   t={t} onClose={() => setModal(null)} onSave={data => editGasto(modal.data.id, data)}   editData={modal.data} />}
+      {modal === 'importExcel' && <ImportarExcelModal t={t} onClose={() => setModal(null)} onSave={savePlantilla} />}
       {toast && <Toast t={t} msg={toast.msg} type={toast.type} />}
     </div>
   );
@@ -436,6 +523,8 @@ function Sidebar({ t, page, setPage, currentUser, onLogin, onLogout }) {
     { ico:IcoUser,      label:'Por cliente',   key:'clientes' },
     { sec:'Operaciones' },
     { ico:IcoBriefcase, label:'Empresas',      key:'operaciones' },
+    { sec:'Configuración' },
+    { ico:IcoSettings,  label:'Montos Fijos',  key:'montos' },
   ];
   const initial = currentUser?.email?.[0]?.toUpperCase() || '?';
   const emailShort = currentUser?.email?.split('@')[0] || '';
@@ -545,11 +634,12 @@ function PageHeader({ t, meta, mes }) {
 // ════════════════════════════════════════════════════════════
 // DASHBOARD
 // ════════════════════════════════════════════════════════════
-function DashPage({ t, totals, series, movimientos, categorias, clientes, mes, currentUser, onAddIng, onAddGast }) {
+function DashPage({ t, totals, series, movimientos, categorias, clientes, mes, currentUser, onAddIng, onAddGast, plantillaFija, onBulkLoad, onGoMontos }) {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Buenos días' : hour < 18 ? 'Buenas tardes' : 'Buenas noches';
   const name = currentUser?.email?.split('@')[0] || 'usuario';
   const hasData = totals.ingTotal > 0 || totals.gastTotal > 0;
+  const mesSinDatos = plantillaFija.length > 0 && totals.ingMes === 0 && totals.gastMes === 0;
 
   return (
     <>
@@ -562,6 +652,26 @@ function DashPage({ t, totals, series, movimientos, categorias, clientes, mes, c
         </div>
       </div>
 
+      {mesSinDatos && (
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 20px',
+          borderRadius:14, background:t.accentBg, border:`1px solid ${t.accent}33`, marginBottom:18 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+            <span style={{ fontSize:18 }}>📋</span>
+            <div>
+              <div style={{ fontWeight:600, fontSize:14, color:t.text }}>Tienes montos fijos configurados</div>
+              <div style={{ fontSize:12.5, color:t.text2 }}>{mesLabel(mes)} aún no tiene registros. ¿Cargar la plantilla automáticamente?</div>
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={onGoMontos} style={{ all:'unset', cursor:'pointer', padding:'8px 14px', borderRadius:10,
+              border:`1px solid ${t.border}`, color:t.text2, fontSize:13, fontWeight:500 }}>Ver plantilla</button>
+            <button onClick={() => onBulkLoad(mes)} style={{ all:'unset', cursor:'pointer', padding:'8px 16px', borderRadius:10,
+              background:t.text, color:t.bg, fontSize:13, fontWeight:600 }}>
+              Cargar para {mesLabel(mes)}
+            </button>
+          </div>
+        </div>
+      )}
       {!hasData ? (
         <EmptyState t={t} onAddIng={onAddIng} onAddGast={onAddGast} />
       ) : (
@@ -912,7 +1022,7 @@ function ComparPage({ t, totals, series }) {
 // ════════════════════════════════════════════════════════════
 // INGRESOS PAGE
 // ════════════════════════════════════════════════════════════
-function IngPage({ t, ingresos, mes, ano, onAdd, onDelete }) {
+function IngPage({ t, ingresos, mes, ano, onAdd, onDelete, onEdit }) {
   const [query, setQuery] = useState('');
   const [filtro, setFiltro] = useState('todos');
   const totalMes = ingresos.filter(x=>x.periodo===mes).reduce((s,x)=>s+x.monto,0);
@@ -951,7 +1061,7 @@ function IngPage({ t, ingresos, mes, ano, onAdd, onDelete }) {
         <table style={tableS}>
           <thead><tr>
             {['Fecha','Cliente','Concepto','Período','Monto','Notas',''].map((h,i)=>(
-              <th key={i} style={{ padding:'14px 18px',fontSize:10.5,fontWeight:600,letterSpacing:'0.8px',textTransform:'uppercase',color:t.muted,textAlign:i>=4?'right':'left',borderBottom:`1px solid ${t.border}`,background:t.surfaceAlt }}>{h}</th>
+              <th key={i} style={{ padding:'14px 18px',fontSize:10.5,fontWeight:600,letterSpacing:'0.8px',textTransform:'uppercase',color:t.muted,textAlign:i>=4&&i<6?'right':'left',borderBottom:`1px solid ${t.border}`,background:t.surfaceAlt }}>{h}</th>
             ))}
           </tr></thead>
           <tbody>
@@ -964,7 +1074,8 @@ function IngPage({ t, ingresos, mes, ano, onAdd, onDelete }) {
                 <td style={{ padding:'14px 18px' }}><span style={{ display:'inline-block',padding:'2px 9px',borderRadius:99,fontSize:11.5,fontWeight:500,background:t.accentBg,color:t.accent }}>{mesLabel(x.periodo)}</span></td>
                 <td style={{ padding:'14px 18px',fontSize:13.5,fontWeight:600,color:t.pos,textAlign:'right',fontFamily:"'JetBrains Mono'" }}>+{fmt(x.monto)}</td>
                 <td style={{ padding:'14px 18px',fontSize:13,color:t.muted,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{x.notas||'—'}</td>
-                <td style={{ padding:'14px 18px',textAlign:'right' }}>
+                <td style={{ padding:'14px 18px',textAlign:'right',display:'flex',gap:4,justifyContent:'flex-end' }}>
+                  <button onClick={()=>onEdit(x)} style={iconBtn(t)} title="Editar">{IcoEdit}</button>
                   <button onClick={()=>{ if(confirm('¿Eliminar este ingreso?')) onDelete(x.id); }} style={iconBtn(t)} title="Eliminar">{IcoTrash}</button>
                 </td>
               </tr>
@@ -979,7 +1090,7 @@ function IngPage({ t, ingresos, mes, ano, onAdd, onDelete }) {
 // ════════════════════════════════════════════════════════════
 // GASTOS PAGE
 // ════════════════════════════════════════════════════════════
-function GastPage({ t, gastos, mes, ano, onAdd, onDelete }) {
+function GastPage({ t, gastos, mes, ano, onAdd, onDelete, onEdit }) {
   const [query, setQuery] = useState('');
   const [filtro, setFiltro] = useState('todos');
   const [filtroCat, setFiltroCat] = useState('todos');
@@ -1041,7 +1152,8 @@ function GastPage({ t, gastos, mes, ano, onAdd, onDelete }) {
                   <td style={{ padding:'14px 18px' }}><span style={{ display:'inline-block',padding:'2px 9px',borderRadius:99,fontSize:11.5,fontWeight:500,background:t.chip,color:t.text2 }}>{mesLabel(x.periodo)}</span></td>
                   <td style={{ padding:'14px 18px',fontSize:13.5,fontWeight:600,color:t.neg,textAlign:'right',fontFamily:"'JetBrains Mono'" }}>−{fmt(x.monto)}</td>
                   <td style={{ padding:'14px 18px',fontSize:13,color:t.muted,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{x.notas||'—'}</td>
-                  <td style={{ padding:'14px 18px',textAlign:'right' }}>
+                  <td style={{ padding:'14px 18px',textAlign:'right',display:'flex',gap:4,justifyContent:'flex-end' }}>
+                    <button onClick={()=>onEdit(x)} style={iconBtn(t)} title="Editar">{IcoEdit}</button>
                     <button onClick={()=>{ if(confirm('¿Eliminar este gasto?')) onDelete(x.id); }} style={iconBtn(t)} title="Eliminar">{IcoTrash}</button>
                   </td>
                 </tr>
@@ -1236,20 +1348,23 @@ function ModalOverlay({ t, onClose, children }) {
   );
 }
 
-function IngresoModal({ t, onClose, onSave }) {
-  const [form, setForm] = useState({ cliente:'', monto:'', fecha:hoy(), periodo:mesPeriodo(), concepto:'', notas:'' });
+function IngresoModal({ t, onClose, onSave, editData }) {
+  const [form, setForm] = useState(editData ? {
+    cliente: editData.cliente, monto: String(editData.monto), fecha: editData.fecha,
+    periodo: editData.periodo, concepto: editData.concepto||'', notas: editData.notas||''
+  } : { cliente:'', monto:'', fecha:hoy(), periodo:mesPeriodo(), concepto:'', notas:'' });
   const [err, setErr] = useState('');
   const set = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const save = () => {
     if (!form.cliente || !form.monto || !form.fecha) { setErr('Completa los campos obligatorios.'); return; }
     const monto = parseFloat(form.monto);
-    if (isNaN(monto)||monto<=0) { setErr('Monto inválido.'); return; }
+    if (isNaN(monto)||monto<0) { setErr('Monto inválido.'); return; }
     onSave({ cliente:form.cliente, monto, fecha:form.fecha, periodo:form.periodo||form.fecha.slice(0,7), concepto:form.concepto, notas:form.notas });
   };
   return (
     <ModalOverlay t={t} onClose={onClose}>
       <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20 }}>
-        <h3 style={{ fontFamily:"'Fraunces',serif",fontSize:26,color:t.text }}>Registrar Ingreso</h3>
+        <h3 style={{ fontFamily:"'Fraunces',serif",fontSize:26,color:t.text }}>{editData ? 'Editar Ingreso' : 'Registrar Ingreso'}</h3>
         <button onClick={onClose} style={iconBtn(t)}>{IcoX}</button>
       </div>
       {err && <div style={{ padding:'10px 14px',borderRadius:9,background:t.negSoft,color:t.neg,fontSize:13,marginBottom:14 }}>{err}</div>}
@@ -1282,26 +1397,29 @@ function IngresoModal({ t, onClose, onSave }) {
       </div>
       <div style={{ display:'flex',gap:10,justifyContent:'flex-end',marginTop:24,paddingTop:20,borderTop:`1px solid ${t.border}` }}>
         <button onClick={onClose} style={{ all:'unset',cursor:'pointer',padding:'9px 18px',borderRadius:12,border:`1px solid ${t.border}`,color:t.text2,fontSize:14,fontWeight:600 }}>Cancelar</button>
-        <button onClick={save} style={primaryBtn(t)}>Guardar ingreso</button>
+        <button onClick={save} style={primaryBtn(t)}>{editData ? 'Guardar cambios' : 'Guardar ingreso'}</button>
       </div>
     </ModalOverlay>
   );
 }
 
-function GastoModal({ t, onClose, onSave }) {
-  const [form, setForm] = useState({ categoria:'nomina', monto:'', fecha:hoy(), periodo:mesPeriodo(), descripcion:'', notas:'' });
+function GastoModal({ t, onClose, onSave, editData }) {
+  const [form, setForm] = useState(editData ? {
+    categoria: editData.categoria||'nomina', monto: String(editData.monto), fecha: editData.fecha,
+    periodo: editData.periodo, descripcion: editData.descripcion||'', notas: editData.notas||''
+  } : { categoria:'nomina', monto:'', fecha:hoy(), periodo:mesPeriodo(), descripcion:'', notas:'' });
   const [err, setErr] = useState('');
   const set = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const save = () => {
-    if (!form.monto||!form.fecha||!form.descripcion) { setErr('Completa los campos obligatorios.'); return; }
+    if (!form.fecha||!form.descripcion) { setErr('Completa los campos obligatorios.'); return; }
     const monto=parseFloat(form.monto);
-    if (isNaN(monto)||monto<=0) { setErr('Monto inválido.'); return; }
+    if (isNaN(monto)||monto<0) { setErr('Monto inválido.'); return; }
     onSave({ categoria:form.categoria, monto, fecha:form.fecha, periodo:form.periodo||form.fecha.slice(0,7), descripcion:form.descripcion, notas:form.notas });
   };
   return (
     <ModalOverlay t={t} onClose={onClose}>
       <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20 }}>
-        <h3 style={{ fontFamily:"'Fraunces',serif",fontSize:26,color:t.text }}>Registrar Gasto</h3>
+        <h3 style={{ fontFamily:"'Fraunces',serif",fontSize:26,color:t.text }}>{editData ? 'Editar Gasto' : 'Registrar Gasto'}</h3>
         <button onClick={onClose} style={iconBtn(t)}>{IcoX}</button>
       </div>
       {err && <div style={{ padding:'10px 14px',borderRadius:9,background:t.negSoft,color:t.neg,fontSize:13,marginBottom:14 }}>{err}</div>}
@@ -1335,7 +1453,7 @@ function GastoModal({ t, onClose, onSave }) {
       </div>
       <div style={{ display:'flex',gap:10,justifyContent:'flex-end',marginTop:24,paddingTop:20,borderTop:`1px solid ${t.border}` }}>
         <button onClick={onClose} style={{ all:'unset',cursor:'pointer',padding:'9px 18px',borderRadius:12,border:`1px solid ${t.border}`,color:t.text2,fontSize:14,fontWeight:600 }}>Cancelar</button>
-        <button onClick={save} style={primaryBtn(t)}>Guardar gasto</button>
+        <button onClick={save} style={primaryBtn(t)}>{editData ? 'Guardar cambios' : 'Guardar gasto'}</button>
       </div>
     </ModalOverlay>
   );
@@ -1609,6 +1727,275 @@ function GuardiaModal({ t, onClose, onSave, empresas }) {
         <button onClick={onClose} style={{ all:'unset', cursor:'pointer', padding:'9px 18px', borderRadius:12, border:`1px solid ${t.border}`, color:t.text2, fontSize:14, fontWeight:600 }}>Cancelar</button>
         <button onClick={save} style={primaryBtn(t)}>Guardar guardia</button>
       </div>
+    </ModalOverlay>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// MONTOS FIJOS PAGE
+// ════════════════════════════════════════════════════════════
+function MontosPage({ t, plantillaFija, mes, onImport, onBulkLoad, onDeleteItem }) {
+  const [periodoTarget, setPeriodoTarget] = useState(mes);
+  const ingresos = plantillaFija.filter(x => x.tipo === 'ingreso');
+  const gastos   = plantillaFija.filter(x => x.tipo === 'gasto');
+  const totalIng = ingresos.reduce((s,x) => s+x.monto, 0);
+  const totalGast = gastos.reduce((s,x) => s+x.monto, 0);
+
+  return (
+    <>
+      <div style={{ marginBottom:26 }}>
+        <div style={{ fontSize:11, color:t.muted, letterSpacing:'2px', textTransform:'uppercase', fontWeight:600 }}>Configuración</div>
+        <h1 style={{ fontFamily:"'Fraunces',serif", fontWeight:500, fontSize:44, letterSpacing:'-1px', lineHeight:1.05, color:t.text, margin:'6px 0' }}>Montos Fijos</h1>
+        <p style={{ fontSize:14, color:t.text2, margin:0, maxWidth:640 }}>Plantilla mensual que se repite automáticamente. Importa desde Excel o edita ítems individualmente.</p>
+      </div>
+
+      <div style={{ display:'flex', gap:10, marginBottom:22, flexWrap:'wrap' }}>
+        <button onClick={onImport} style={{ all:'unset', cursor:'pointer', padding:'9px 16px', borderRadius:12,
+          background:t.text, color:t.bg, fontSize:13, fontWeight:600, display:'flex', alignItems:'center', gap:8 }}>
+          <span style={{ width:16, height:16, display:'inline-flex' }}>{IcoUpload}</span>
+          Importar desde Excel
+        </button>
+        {plantillaFija.length > 0 && (
+          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <input type="month" value={periodoTarget} onChange={e => setPeriodoTarget(e.target.value)}
+              style={{ ...inputS(t), width:'auto', padding:'8px 12px' }}/>
+            <button onClick={() => onBulkLoad(periodoTarget)} style={{ all:'unset', cursor:'pointer', padding:'9px 16px', borderRadius:12,
+              background:t.accentBg, color:t.accent, fontSize:13, fontWeight:600, border:`1px solid ${t.accent}33`,
+              display:'flex', alignItems:'center', gap:8 }}>
+              Cargar para {mesLabel(periodoTarget)}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {plantillaFija.length === 0 ? (
+        <div style={{ ...cardS(t, { padding:48, textAlign:'center' }) }}>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:26, fontWeight:500, color:t.text, marginBottom:12 }}>Sin plantilla configurada</div>
+          <p style={{ color:t.text2, fontSize:14, marginBottom:24 }}>Importa tu archivo Excel para configurar los montos fijos mensuales.</p>
+          <button onClick={onImport} style={{ all:'unset', cursor:'pointer', padding:'10px 20px', borderRadius:12,
+            background:t.text, color:t.bg, fontSize:13, fontWeight:600 }}>
+            Importar desde Excel
+          </button>
+        </div>
+      ) : (
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:18 }}>
+          <div style={cardS(t, { padding:0, overflow:'hidden' })}>
+            <div style={{ padding:'16px 22px', borderBottom:`1px solid ${t.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <div>
+                <div style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontWeight:500, color:t.text }}>Ingresos</div>
+                <div style={{ fontSize:12, color:t.muted, marginTop:2 }}>{ingresos.length} ítems · {fmt(totalIng)} total</div>
+              </div>
+              <span style={{ padding:'3px 10px', borderRadius:99, background:t.posSoft, color:t.pos, fontSize:12, fontWeight:600 }}>{fmt(totalIng)}</span>
+            </div>
+            <table style={tableS}>
+              <thead><tr>
+                {['Cliente','Monto',''].map((h,i) => (
+                  <th key={i} style={{ padding:'10px 18px', fontSize:10.5, fontWeight:600, letterSpacing:'0.8px',
+                    textTransform:'uppercase', color:t.muted, textAlign:i===1?'right':'left',
+                    borderBottom:`1px solid ${t.border}`, background:t.surfaceAlt }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {ingresos.map((x, idx) => (
+                  <tr key={idx} style={{ borderTop:`1px solid ${t.border}` }}>
+                    <td style={{ padding:'12px 18px', fontSize:13.5, fontWeight:600, color:t.text }}>{x.nombre}</td>
+                    <td style={{ padding:'12px 18px', textAlign:'right', fontFamily:"'JetBrains Mono'", fontWeight:600, color:t.pos, fontSize:13.5 }}>{fmt(x.monto)}</td>
+                    <td style={{ padding:'12px 18px', textAlign:'right' }}>
+                      <button onClick={() => { if(confirm(`¿Quitar ${x.nombre} de la plantilla?`)) onDeleteItem(plantillaFija.indexOf(x)); }}
+                        style={iconBtn(t)} title="Quitar">{IcoTrash}</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={cardS(t, { padding:0, overflow:'hidden' })}>
+            <div style={{ padding:'16px 22px', borderBottom:`1px solid ${t.border}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <div>
+                <div style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontWeight:500, color:t.text }}>Gastos</div>
+                <div style={{ fontSize:12, color:t.muted, marginTop:2 }}>{gastos.length} ítems · {fmt(totalGast)} total</div>
+              </div>
+              <span style={{ padding:'3px 10px', borderRadius:99, background:t.negSoft, color:t.neg, fontSize:12, fontWeight:600 }}>{fmt(totalGast)}</span>
+            </div>
+            <table style={tableS}>
+              <thead><tr>
+                {['Concepto','Categoría','Monto',''].map((h,i) => (
+                  <th key={i} style={{ padding:'10px 18px', fontSize:10.5, fontWeight:600, letterSpacing:'0.8px',
+                    textTransform:'uppercase', color:t.muted, textAlign:i===2?'right':'left',
+                    borderBottom:`1px solid ${t.border}`, background:t.surfaceAlt }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {gastos.map((x, idx) => {
+                  const cat = CAT_META[x.categoria] || { label:'Otros', color:t.muted };
+                  return (
+                    <tr key={idx} style={{ borderTop:`1px solid ${t.border}` }}>
+                      <td style={{ padding:'12px 18px', fontSize:13.5, fontWeight:600, color:t.text }}>{x.nombre}</td>
+                      <td style={{ padding:'12px 18px' }}>
+                        <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'2px 8px', borderRadius:99,
+                          background:t.chip, fontSize:12, color:t.text2, border:`1px solid ${t.border}` }}>
+                          <span style={{ width:6, height:6, borderRadius:99, background:cat.color }}/>{cat.label}
+                        </span>
+                      </td>
+                      <td style={{ padding:'12px 18px', textAlign:'right', fontFamily:"'JetBrains Mono'", fontWeight:600,
+                        color:x.monto===0?t.muted:t.neg, fontSize:13.5 }}>
+                        {x.monto === 0 ? <span style={{ fontSize:11, fontStyle:'italic' }}>Por definir</span> : `−${fmt(x.monto)}`}
+                      </td>
+                      <td style={{ padding:'12px 18px', textAlign:'right' }}>
+                        <button onClick={() => { if(confirm(`¿Quitar ${x.nombre} de la plantilla?`)) onDeleteItem(plantillaFija.indexOf(x)); }}
+                          style={iconBtn(t)} title="Quitar">{IcoTrash}</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// IMPORTAR EXCEL MODAL
+// ════════════════════════════════════════════════════════════
+function ImportarExcelModal({ t, onClose, onSave }) {
+  const [preview, setPreview] = useState(null);
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleFile = async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setErr(''); setLoading(true);
+    try {
+      const data = await file.arrayBuffer();
+      const XLSX = window.XLSX;
+      if (!XLSX) { setErr('SheetJS no está disponible. Verifica tu conexión.'); setLoading(false); return; }
+      const wb = XLSX.read(data, { type:'array' });
+      const wsName = wb.SheetNames.find(n => n.toLowerCase().includes('fijo') || n.toLowerCase().includes('fixed')) || wb.SheetNames[0];
+      const ws = wb.Sheets[wsName];
+      if (!ws) { setErr('No se encontró ninguna hoja válida.'); setLoading(false); return; }
+      const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:null });
+      const items = [];
+      // Find header row (contains 'Ingreso' and 'Gasto')
+      let startRow = 0;
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        if (r && r.some(v => v && String(v).toLowerCase().includes('ingreso'))) { startRow = i + 1; break; }
+      }
+      for (let i = startRow; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row) continue;
+        const ingNombre = row[1], ingMonto = row[2];
+        const gastNombre = row[4], gastMonto = row[5];
+        if (ingNombre && String(ingNombre).trim()) {
+          items.push({ tipo:'ingreso', nombre:String(ingNombre).trim(), monto:Number(ingMonto)||0 });
+        }
+        if (gastNombre && String(gastNombre).trim()) {
+          items.push({ tipo:'gasto', nombre:String(gastNombre).trim(), monto:Number(gastMonto)||0, categoria:categoriaPorNombre(gastNombre) });
+        }
+      }
+      if (!items.length) { setErr('No se encontraron datos en la hoja "Montos Fijos".'); setLoading(false); return; }
+      setPreview(items);
+    } catch(ex) {
+      setErr('Error al leer el archivo: ' + ex.message);
+    }
+    setLoading(false);
+  };
+
+  const confirm = async () => {
+    await onSave(preview);
+    onClose();
+  };
+
+  const ingPreview = preview ? preview.filter(x => x.tipo === 'ingreso') : [];
+  const gastPreview = preview ? preview.filter(x => x.tipo === 'gasto') : [];
+
+  return (
+    <ModalOverlay t={t} onClose={onClose}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+        <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:26, color:t.text }}>Importar desde Excel</h3>
+        <button onClick={onClose} style={iconBtn(t)}>{IcoX}</button>
+      </div>
+
+      {!preview ? (
+        <>
+          <p style={{ fontSize:14, color:t.text2, marginBottom:20, lineHeight:1.6 }}>
+            Selecciona tu archivo <strong>.xlsx</strong>. Se leerá automáticamente la hoja <strong>"Montos Fijos"</strong>
+            con las columnas Ingreso/Monto y Gasto/Monto.
+          </p>
+          {err && <div style={{ padding:'10px 14px', borderRadius:9, background:t.negSoft, color:t.neg, fontSize:13, marginBottom:14 }}>{err}</div>}
+          <label style={{ display:'block', cursor:'pointer', padding:'32px', borderRadius:14,
+            border:`2px dashed ${t.border}`, textAlign:'center', background:t.surfaceAlt }}>
+            <div style={{ fontSize:32, marginBottom:8 }}>📄</div>
+            <div style={{ fontWeight:600, color:t.text, fontSize:14, marginBottom:4 }}>
+              {loading ? 'Leyendo archivo…' : 'Haz clic o arrastra tu archivo Excel'}
+            </div>
+            <div style={{ fontSize:12.5, color:t.muted }}>.xlsx o .xls</div>
+            <input type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display:'none' }}/>
+          </label>
+        </>
+      ) : (
+        <>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16 }}>
+            <div style={{ padding:'10px 14px', borderRadius:10, background:t.posSoft, color:t.pos, textAlign:'center' }}>
+              <div style={{ fontWeight:700, fontSize:20 }}>{ingPreview.length}</div>
+              <div style={{ fontSize:12 }}>ingresos</div>
+            </div>
+            <div style={{ padding:'10px 14px', borderRadius:10, background:t.negSoft, color:t.neg, textAlign:'center' }}>
+              <div style={{ fontWeight:700, fontSize:20 }}>{gastPreview.length}</div>
+              <div style={{ fontSize:12 }}>gastos ({gastPreview.filter(x=>x.monto===0).length} sin monto)</div>
+            </div>
+          </div>
+          <div style={{ maxHeight:320, overflowY:'auto', border:`1px solid ${t.border}`, borderRadius:12, marginBottom:16 }}>
+            <table style={tableS}>
+              <thead><tr>
+                {['Tipo','Nombre','Monto','Categoría'].map((h,i) => (
+                  <th key={i} style={{ padding:'10px 14px', fontSize:10.5, fontWeight:600, letterSpacing:'0.8px',
+                    textTransform:'uppercase', color:t.muted, textAlign:i===2?'right':'left',
+                    borderBottom:`1px solid ${t.border}`, background:t.surfaceAlt, position:'sticky', top:0 }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {preview.map((x, i) => (
+                  <tr key={i} style={{ borderTop:`1px solid ${t.border}` }}>
+                    <td style={{ padding:'9px 14px' }}>
+                      <span style={{ padding:'2px 8px', borderRadius:99, fontSize:11, fontWeight:600,
+                        background: x.tipo==='ingreso' ? t.posSoft : t.negSoft,
+                        color: x.tipo==='ingreso' ? t.pos : t.neg }}>
+                        {x.tipo==='ingreso' ? 'Ingreso' : 'Gasto'}
+                      </span>
+                    </td>
+                    <td style={{ padding:'9px 14px', fontSize:13, fontWeight:500, color:t.text }}>{x.nombre}</td>
+                    <td style={{ padding:'9px 14px', textAlign:'right', fontFamily:"'JetBrains Mono'", fontSize:13,
+                      color: x.monto===0 ? t.muted : (x.tipo==='ingreso'?t.pos:t.neg) }}>
+                      {x.monto === 0 ? <em style={{ fontSize:11 }}>$0 · editar después</em> : fmt(x.monto)}
+                    </td>
+                    <td style={{ padding:'9px 14px', fontSize:12, color:t.text2 }}>
+                      {x.tipo==='gasto' ? (CAT_META[x.categoria]?.label || 'Otros') : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display:'flex', gap:10, justifyContent:'space-between', alignItems:'center' }}>
+            <button onClick={() => setPreview(null)} style={{ all:'unset', cursor:'pointer', fontSize:13, color:t.muted, textDecoration:'underline' }}>
+              ← Seleccionar otro archivo
+            </button>
+            <div style={{ display:'flex', gap:10 }}>
+              <button onClick={onClose} style={{ all:'unset', cursor:'pointer', padding:'9px 18px', borderRadius:12,
+                border:`1px solid ${t.border}`, color:t.text2, fontSize:14, fontWeight:600 }}>Cancelar</button>
+              <button onClick={confirm} style={{ ...primaryBtn(t) }}>
+                Guardar plantilla ({preview.length} ítems)
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </ModalOverlay>
   );
 }
