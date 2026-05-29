@@ -1863,27 +1863,43 @@ function ImportarExcelModal({ t, onClose, onSave }) {
       const ws     = wb.Sheets[wsName];
       if (!ws) { setErr('No se encontró ninguna hoja válida.'); setLoading(false); return; }
 
-      // Leer como objetos usando la primera fila como encabezado
-      const rows = XLSX.utils.sheet_to_json(ws, { raw:true, defval:null });
-      const items = [];
+      // Leer fila por fila para mayor compatibilidad
+      const rawRows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+      if (!rawRows.length) { setErr('La hoja está vacía.'); setLoading(false); return; }
 
-      for (const row of rows) {
-        // Buscar las columnas ignorando mayúsculas/minúsculas y espacios
-        const keys = Object.keys(row);
-        const kTipo   = keys.find(k => k.trim().toLowerCase() === 'tipo');
-        const kNombre = keys.find(k => k.trim().toLowerCase() === 'nombre');
-        const kMonto  = keys.find(k => k.trim().toLowerCase() === 'monto');
-        if (!kTipo || !kNombre) continue;
-        const tipo   = String(row[kTipo]  || '').trim().toLowerCase();
-        const nombre = String(row[kNombre]|| '').trim();
-        const monto  = Number(row[kMonto] || 0) || 0;
+      // Encontrar la fila de encabezados buscando "tipo" o "nombre"
+      let headerIdx = -1;
+      let colTipo = -1, colNombre = -1, colMonto = -1;
+      for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+        const row = rawRows[i].map(c => String(c).trim().toLowerCase());
+        const ti = row.findIndex(c => c === 'tipo');
+        const ni = row.findIndex(c => c === 'nombre');
+        const mi = row.findIndex(c => c === 'monto');
+        if (ti >= 0 && ni >= 0) {
+          headerIdx = i; colTipo = ti; colNombre = ni; colMonto = mi;
+          break;
+        }
+      }
+
+      if (headerIdx < 0) {
+        setErr('No se encontró la fila de encabezados con columnas "Tipo" y "Nombre". Asegúrate de que la primera fila tenga esos títulos.');
+        setLoading(false); return;
+      }
+
+      const items = [];
+      for (let i = headerIdx + 1; i < rawRows.length; i++) {
+        const row = rawRows[i];
+        const tipo   = String(row[colTipo]   ?? '').trim().toLowerCase();
+        const nombre = String(row[colNombre] ?? '').trim();
         if (!nombre) continue;
+        const montoRaw = colMonto >= 0 ? row[colMonto] : 0;
+        const monto = parseFloat(String(montoRaw).replace(/[^0-9.\-]/g, '')) || 0;
         if (tipo === 'ingreso') items.push({ tipo:'ingreso', nombre, monto });
         if (tipo === 'gasto')   items.push({ tipo:'gasto',   nombre, monto, categoria:categoriaPorNombre(nombre) });
       }
 
       if (!items.length) {
-        setErr('No se encontraron datos. Verifica que la hoja tenga columnas "Tipo", "Nombre" y "Monto" en la primera fila, y valores "ingreso" o "gasto" en la columna Tipo.');
+        setErr('No se encontraron filas con "ingreso" o "gasto" en la columna Tipo. Verifica que los valores estén escritos correctamente.');
         setLoading(false); return;
       }
       setPreview(items);
