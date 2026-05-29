@@ -1878,24 +1878,35 @@ function ImportarExcelModal({ t, onClose, onSave }) {
       const wsName = wb.SheetNames.find(n => n.toLowerCase().includes('fijo') || n.toLowerCase().includes('fixed')) || wb.SheetNames[0];
       const ws = wb.Sheets[wsName];
       if (!ws) { setErr('No se encontró ninguna hoja válida.'); setLoading(false); return; }
-      const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:null });
+      const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:null, raw:true });
       const items = [];
-      // Find header row (contains 'Ingreso' and 'Gasto')
+      // Find the EXACT header row: must have BOTH 'ingreso' AND 'gasto' as exact cell values
       let startRow = 0;
+      let colIng = 1, colIngM = 2, colGast = 4, colGastM = 5;
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
-        if (r && r.some(v => v && String(v).toLowerCase().includes('ingreso'))) { startRow = i + 1; break; }
+        if (!r) continue;
+        const ingIdx  = r.findIndex(v => v != null && String(v).trim().toLowerCase() === 'ingreso');
+        const gastIdx = r.findIndex(v => v != null && String(v).trim().toLowerCase() === 'gasto');
+        if (ingIdx >= 0 && gastIdx > ingIdx) {
+          colIng = ingIdx; colIngM = ingIdx + 1;
+          colGast = gastIdx; colGastM = gastIdx + 1;
+          startRow = i + 1;
+          break;
+        }
       }
       for (let i = startRow; i < rows.length; i++) {
         const row = rows[i];
         if (!row) continue;
-        const ingNombre = row[1], ingMonto = row[2];
-        const gastNombre = row[4], gastMonto = row[5];
-        if (ingNombre && String(ingNombre).trim()) {
-          items.push({ tipo:'ingreso', nombre:String(ingNombre).trim(), monto:Number(ingMonto)||0 });
+        const ingNombre  = row[colIng];
+        const ingMonto   = row[colIngM];
+        const gastNombre = row[colGast];
+        const gastMonto  = row[colGastM];
+        if (ingNombre && typeof ingNombre === 'string' && ingNombre.trim()) {
+          items.push({ tipo:'ingreso', nombre:ingNombre.trim(), monto:Number(ingMonto)||0 });
         }
-        if (gastNombre && String(gastNombre).trim()) {
-          items.push({ tipo:'gasto', nombre:String(gastNombre).trim(), monto:Number(gastMonto)||0, categoria:categoriaPorNombre(gastNombre) });
+        if (gastNombre && typeof gastNombre === 'string' && gastNombre.trim()) {
+          items.push({ tipo:'gasto', nombre:gastNombre.trim(), monto:Number(gastMonto)||0, categoria:categoriaPorNombre(gastNombre) });
         }
       }
       if (!items.length) { setErr('No se encontraron datos en la hoja "Montos Fijos".'); setLoading(false); return; }
